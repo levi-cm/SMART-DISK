@@ -1,0 +1,9 @@
+.env
+.env.*
+!.env.example
+state/
+config/drives.conf
+config/users.conf
+docker-compose.override.yml
+*.log
+*.tmp

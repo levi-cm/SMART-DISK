@@ -1,0 +1,7 @@
+# Copy or edit config/drives.conf.
+# Put one block device path per line. Blank lines and comments are ignored.
+#
+# Common examples:
+/dev/sda
+# /dev/sdb
+# /dev/disk/by-id/<stable-drive-id>

@@ -1,0 +1,51 @@
+services:
+  smart-watcher:
+    build: .
+    image: smart-watcher:latest
+    container_name: smart-watcher
+    hostname: smart-watcher
+    restart: unless-stopped
+    init: true
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - SYS_RAWIO
+      - SYS_ADMIN
+    devices:
+      - /dev/sda:/dev/sda
+      - /dev/sdb:/dev/sdb
+      - /dev/sdc:/dev/sdc
+    env_file:
+      - .env
+    pids_limit: 128
+    deploy:
+      resources:
+        limits:
+          cpus: "0.20"
+          memory: 96M
+          pids: 128
+        reservations:
+          cpus: "0.02"
+          memory: 32M
+    environment:
+      SCAN_INTERVAL: "21600"
+      BURST_COUNT: "10"
+      BURST_DELAY: "30"
+      REMINDER_INTERVAL: "86400"
+      HEARTBEAT_EVERY: "4"
+      TEMP_LIMIT: "${TEMP_LIMIT:-50}"
+      SSD_LIFE_MIN: "${SSD_LIFE_MIN:-90}"
+      HOST_NAME: "${HOST_NAME:-debian-server}"
+    volumes:
+      - ./config:/config:ro
+      - ./state:/state
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"

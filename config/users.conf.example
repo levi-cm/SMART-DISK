@@ -1,0 +1,5 @@
+# Copy this file to config/users.conf.
+# Do not commit config/users.conf.
+#
+# Put one authorized Telegram chat ID per line:
+# <your-chat-id>
