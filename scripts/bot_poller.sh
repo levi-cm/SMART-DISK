@@ -5,13 +5,19 @@
 
 set -uo pipefail
 
+SCRIPTS_DIR="${SCRIPTS_DIR:-/scripts}"
 # shellcheck source=/dev/null
-source /scripts/telegram.sh
+source "${SCRIPTS_DIR}/telegram.sh"
 # shellcheck source=/dev/null
-source /scripts/state_lib.sh
+source "${SCRIPTS_DIR}/state_lib.sh"
+# shellcheck source=/dev/null
+source "${SCRIPTS_DIR}/smart_result_lib.sh"
 
 DRIVES_FILE="${DRIVES_FILE:-/config/drives.conf}"
 USERS_FILE="${USERS_FILE:-/config/users.conf}"
+SMART_CHECK_BIN="${SMART_CHECK_BIN:-${SCRIPTS_DIR}/smart_check.sh}"
+SMARTCTL_BIN="${SMARTCTL_BIN:-smartctl}"
+SMART_POLICY="${SMART_POLICY:-paranoid}"
 HOST_NAME="${HOST_NAME:-$(hostname)}"
 SCAN_INTERVAL="${SCAN_INTERVAL:-21600}"
 HEARTBEAT_EVERY="${HEARTBEAT_EVERY:-4}"
@@ -162,7 +168,7 @@ JSON
 heartbeat_status_text() {
     local state
     state="$(heartbeat_enabled)"
-    local human="❌ *DISABLED* — only failure alerts will be sent."
+    local human="❌ *DISABLED* — only non-OK SMART alerts will be sent."
     [[ "$state" == "true" ]] && human="✅ *ENABLED* — daily 'everything awesome' messages active."
 
     cat <<EOF
@@ -220,10 +226,11 @@ handle_callback() {
 
 # ===== Scan command =====
 
-# Build markdown report file at $1, return overall verdict via stdout: "OK" or "FAIL"
+# Build markdown report file at $1; return highest severity via stdout.
 build_scan_report() {
     local out="$1"
-    local drive verdict v_status reason full any_fail=0
+    local drive verdict severity reason full rank icon label
+    local highest_rank=0 overall="ok"
     local now
     now="$(date -Iseconds)"
 
@@ -238,25 +245,29 @@ build_scan_report() {
     local per_drive_summary=""
     while IFS= read -r drive; do
         [[ -z "$drive" ]] && continue
-        verdict="$(/scripts/smart_check.sh "$drive")"
-        # bash-native parse: status=$1, drive=$2, reason=remainder
-        read -r v_status _ reason <<< "$verdict"
+        verdict="$("$SMART_CHECK_BIN" "$drive")"
+        smart_parse_result "$verdict"
+        severity="$SMART_RESULT_SEVERITY"
+        reason="$SMART_RESULT_REASON"
+        rank="$(smart_severity_rank "$severity")"
+        icon="$(smart_severity_icon "$severity")"
+        label="$(smart_severity_label "$severity")"
+        (( rank > highest_rank )) && highest_rank="$rank"
 
-        if [[ "$v_status" == "FAIL" ]]; then
-            any_fail=1
-            per_drive_summary+="- 🔴 \`${drive}\` — **CRITICAL**: ${reason}"$'\n'
-        else
+        if [[ "$severity" == "ok" ]]; then
             per_drive_summary+="- 🟢 \`${drive}\` — **GOOD**"$'\n'
+        else
+            per_drive_summary+="- ${icon} \`${drive}\` — **${label}**: ${reason}"$'\n'
         fi
 
-        full="$(smartctl -a "$drive" 2>&1 || true)"
+        full="$("$SMARTCTL_BIN" -a "$drive" 2>&1 || true)"
 
         {
             echo ""
-            if [[ "$v_status" == "FAIL" ]]; then
-                echo "## 🔴 ${drive} — CRITICAL"
+            if [[ "$severity" != "ok" ]]; then
+                echo "## ${icon} ${drive} — ${label}"
                 echo ""
-                echo "**Reason:** \`${reason}\`"
+                echo "**Evidence:** \`${reason}\`"
             else
                 echo "## 🟢 ${drive} — GOOD"
             fi
@@ -272,18 +283,20 @@ build_scan_report() {
         echo "## Summary"
         echo ""
         echo "$per_drive_summary"
-        if (( any_fail == 1 )); then
-            echo "**Overall: 🚨 CRITICAL ISSUES FOUND**"
-        else
-            echo "**Overall: ✅ ALL DRIVES HEALTHY**"
-        fi
+        case "$highest_rank" in
+            3) echo "**Overall: 🔴 CRITICAL FINDINGS**" ;;
+            2) echo "**Overall: 🟠 DEGRADED HEALTH**" ;;
+            1) echo "**Overall: 🟡 ADVISORIES REQUIRE REVIEW**" ;;
+            *) echo "**Overall: ✅ ALL DRIVES HEALTHY**" ;;
+        esac
     } >> "$out"
 
-    if (( any_fail == 1 )); then
-        echo "FAIL"
-    else
-        echo "OK"
-    fi
+    case "$highest_rank" in
+        3) overall="critical" ;;
+        2) overall="degraded" ;;
+        1) overall="advisory" ;;
+    esac
+    echo "$overall"
 }
 
 handle_scan() {
@@ -299,19 +312,23 @@ handle_scan() {
     overall="$(build_scan_report "$file")"
 
     # Send per-drive: header verdict, then chunked plain-text smartctl -a output.
-    local drive verdict v_status reason full any_split=0 chunks
+    local drive verdict severity reason icon label full any_split=0 chunks
     while IFS= read -r drive; do
         [[ -z "$drive" ]] && continue
-        verdict="$(/scripts/smart_check.sh "$drive")"
-        read -r v_status _ reason <<< "$verdict"
+        verdict="$("$SMART_CHECK_BIN" "$drive")"
+        smart_parse_result "$verdict"
+        severity="$SMART_RESULT_SEVERITY"
+        reason="$SMART_RESULT_REASON"
+        icon="$(smart_severity_icon "$severity")"
+        label="$(smart_severity_label "$severity")"
 
-        if [[ "$v_status" == "FAIL" ]]; then
-            tg_send_to "$chat_id" "🔴 *${drive} — CRITICAL*"$'\n'"reason: \`${reason}\`"
-        else
+        if [[ "$severity" == "ok" ]]; then
             tg_send_to "$chat_id" "🟢 *${drive} — GOOD*"
+        else
+            tg_send_to "$chat_id" "${icon} *${drive} — ${label}*"$'\n'"evidence: \`${reason}\`"
         fi
 
-        full="$(smartctl -a "$drive" 2>&1 || true)"
+        full="$("$SMARTCTL_BIN" -a "$drive" 2>&1 || true)"
         chunks="$(tg_send_chunked_plain "$chat_id" "===== ${drive} =====
 ${full}")"
         log "drive=${drive} chunks=${chunks}"
@@ -321,13 +338,24 @@ ${full}")"
     done < <(load_drives)
 
     # Final verdict.
-    if [[ "$overall" == "FAIL" ]]; then
-        tg_send_to "$chat_id" "🚨 *SCAN COMPLETE — CRITICAL ISSUES FOUND* 🚨"
-        caption="🚨 Full SMART scan report — CRITICAL on ${HOST_NAME}"
-    else
-        tg_send_to "$chat_id" "✅ *SCAN COMPLETE — ALL DRIVES HEALTHY*"
-        caption="📄 Full SMART scan report — ${HOST_NAME}"
-    fi
+    case "$overall" in
+        critical)
+            tg_send_to "$chat_id" "🔴 *SCAN COMPLETE — CRITICAL FINDINGS*"
+            caption="🔴 Full SMART scan report — CRITICAL on ${HOST_NAME}"
+            ;;
+        degraded)
+            tg_send_to "$chat_id" "🟠 *SCAN COMPLETE — DEGRADED HEALTH*"
+            caption="🟠 Full SMART scan report — DEGRADED on ${HOST_NAME}"
+            ;;
+        advisory)
+            tg_send_to "$chat_id" "🟡 *SCAN COMPLETE — ADVISORIES REQUIRE REVIEW*"
+            caption="🟡 Full SMART scan report — ADVISORY on ${HOST_NAME}"
+            ;;
+        *)
+            tg_send_to "$chat_id" "✅ *SCAN COMPLETE — ALL DRIVES HEALTHY*"
+            caption="📄 Full SMART scan report — ${HOST_NAME}"
+            ;;
+    esac
 
     # If any drive output had to be split, also attach the consolidated .md at the end.
     if (( any_split == 1 )); then
@@ -351,7 +379,7 @@ Commands:
 \`/heartbeat\` — toggle daily 'everything awesome' messages on/off (popup keyboard)
 \`/help\` — show this message
 
-Automatic scan runs every $((SCAN_INTERVAL/3600))h. Failures always trigger spam alerts."
+Automatic scan runs every $((SCAN_INTERVAL/3600))h. Policy: \`${SMART_POLICY}\`. Critical findings always burst; paranoid policy bursts on every finding."
 }
 
 # ===== Dispatch =====
@@ -439,7 +467,7 @@ main() {
                 handle_callback "$cb_id" "$from_id" "$cb_chat_id" "$cb_msg_id" "$cb_data"
                 continue
             fi
-        done < <(jq -j -f /scripts/parse_updates.jq <<< "$resp" 2>/dev/null)
+        done < <(jq -j -f "${SCRIPTS_DIR}/parse_updates.jq" <<< "$resp" 2>/dev/null)
 
         # Persist offset once after the whole batch — one jq fork per poll
         # instead of one per update. On crash mid-batch, Telegram redelivers
@@ -450,4 +478,6 @@ main() {
     done
 }
 
-main "$@"
+if [[ "${BOT_POLLER_LIB_ONLY:-0}" != "1" ]]; then
+    main "$@"
+fi

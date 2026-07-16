@@ -31,11 +31,12 @@ services:
           cpus: "0.02"
           memory: 32M
     environment:
-      SCAN_INTERVAL: "21600"
-      BURST_COUNT: "10"
-      BURST_DELAY: "30"
-      REMINDER_INTERVAL: "86400"
-      HEARTBEAT_EVERY: "4"
+      SMART_POLICY: "${SMART_POLICY:-paranoid}"
+      SCAN_INTERVAL: "${SCAN_INTERVAL:-21600}"
+      BURST_COUNT: "${BURST_COUNT:-10}"
+      BURST_DELAY: "${BURST_DELAY:-30}"
+      REMINDER_INTERVAL: "${REMINDER_INTERVAL:-86400}"
+      HEARTBEAT_EVERY: "${HEARTBEAT_EVERY:-4}"
       TEMP_LIMIT: "${TEMP_LIMIT:-50}"
       SSD_LIFE_MIN: "${SSD_LIFE_MIN:-90}"
       HOST_NAME: "${HOST_NAME:-debian-server}"

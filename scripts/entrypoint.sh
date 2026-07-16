@@ -6,12 +6,17 @@
 
 set -uo pipefail
 
+SCRIPTS_DIR="${SCRIPTS_DIR:-/scripts}"
 # shellcheck source=/dev/null
-source /scripts/telegram.sh
+source "${SCRIPTS_DIR}/telegram.sh"
 # shellcheck source=/dev/null
-source /scripts/state_lib.sh
+source "${SCRIPTS_DIR}/state_lib.sh"
+# shellcheck source=/dev/null
+source "${SCRIPTS_DIR}/smart_result_lib.sh"
 
 DRIVES_FILE="${DRIVES_FILE:-/config/drives.conf}"
+SMART_CHECK_BIN="${SMART_CHECK_BIN:-${SCRIPTS_DIR}/smart_check.sh}"
+SMART_POLICY="${SMART_POLICY:-paranoid}"
 SCAN_INTERVAL="${SCAN_INTERVAL:-21600}"
 BURST_COUNT="${BURST_COUNT:-10}"
 BURST_DELAY="${BURST_DELAY:-30}"
@@ -28,15 +33,15 @@ load_drives() {
     grep -vE '^\s*(#|$)' "$DRIVES_FILE" | tr -d '\r' | awk 'NF'
 }
 
-# state_get <drive> <field>  (field: status|last_alert)
+# state_get <drive> <field>
 state_get() {
     state_read '.[$d][$f] // empty' --arg d "$1" --arg f "$2"
 }
 
-# state_set <drive> <status> <last_alert_epoch>
+# state_set <drive> <status> <severity> <reason> <last_alert_epoch>
 state_set() {
-    state_apply '.[$d] = {status: $s, last_alert: $t}' \
-        --arg d "$1" --arg s "$2" --argjson t "$3"
+    state_apply '.[$d] = {status: $s, severity: $v, reason: $r, last_alert: $t}' \
+        --arg d "$1" --arg s "$2" --arg v "$3" --arg r "$4" --argjson t "$5"
 }
 
 # meta_get <field>
@@ -72,19 +77,63 @@ EOF
     tg_send "$text"
 }
 
+severity_heading() {
+    case "$1" in
+        advisory) echo "🟡 *SMART ADVISORY*" ;;
+        degraded) echo "🟠 *SMART DEGRADED*" ;;
+        critical) echo "🔴 *SMART CRITICAL*" ;;
+        *) echo "⚠️ *SMART WARNING*" ;;
+    esac
+}
+
+severity_guidance() {
+    case "$1" in
+        advisory)
+            echo "Historical or cumulative counters are evidence to investigate, not proof of imminent failure. Check trends, logs, cabling, and backups."
+            ;;
+        degraded)
+            echo "Active health margin is degraded. Investigate promptly, verify backups, and correct temperature or wear conditions."
+            ;;
+        critical)
+            echo "⚠️ ACT NOW. CHECK BACKUPS. Active failure indicators need immediate diagnosis and may require drive replacement. ⚠️"
+            ;;
+        *)
+            echo "Investigate SMART evidence and verify backups."
+            ;;
+    esac
+}
+
+severity_alert() {
+    local drive="$1" severity="$2" reason="$3"
+    local text
+    text=$(cat <<EOF
+$(severity_heading "$severity")
+HOST: \`${HOST_NAME}\`
+DRIVE: \`${drive}\`
+SEVERITY: \`${severity}\`
+EVIDENCE: \`${reason}\`
+TIME: \`$(date -Iseconds)\`
+
+$(severity_guidance "$severity")
+EOF
+)
+    tg_send "$text"
+}
+
 burst_alert() {
-    local drive="$1" reason="$2"
+    local drive="$1" severity="$2" reason="$3"
     local i text
     for ((i=1; i<=BURST_COUNT; i++)); do
         text=$(cat <<EOF
-🚨🚨🚨 *DRIVE FAILURE* 🚨🚨🚨
+$(severity_heading "$severity")
 *ALERT ${i}/${BURST_COUNT}*
 HOST: \`${HOST_NAME}\`
 DRIVE: \`${drive}\`
-REASON: \`${reason}\`
+SEVERITY: \`${severity}\`
+EVIDENCE: \`${reason}\`
 TIME: \`$(date -Iseconds)\`
 
-⚠️ ACT NOW. CHECK BACKUPS. PLAN REPLACEMENT. ⚠️
+$(severity_guidance "$severity")
 EOF
 )
         tg_send "$text"
@@ -95,15 +144,18 @@ EOF
 }
 
 reminder_alert() {
-    local drive="$1" reason="$2"
+    local drive="$1" severity="$2" reason="$3"
     local text
     text=$(cat <<EOF
-😡 *STILL FAILING — ${drive}* 😡
+$(severity_heading "$severity") — *REMINDER*
 HOST: \`${HOST_NAME}\`
-REASON: \`${reason}\`
+DRIVE: \`${drive}\`
+SEVERITY: \`${severity}\`
+EVIDENCE: \`${reason}\`
 TIME: \`$(date -Iseconds)\`
 
-Drive *still* in failed state. Replace it. This message repeats every $((REMINDER_INTERVAL/3600))h while degraded.
+Finding persists. This message repeats every $((REMINDER_INTERVAL/3600))h while non-OK.
+$(severity_guidance "$severity")
 EOF
 )
     tg_send "$text"
@@ -124,7 +176,7 @@ EOF
 }
 
 scan_once() {
-    local now drive result status reason last_status last_alert
+    local now drive result status severity reason last_status last_severity last_reason last_alert action alert_time
     local all_ok=1
     now="$(date +%s)"
 
@@ -134,39 +186,60 @@ scan_once() {
     for drive in "${drives_arr[@]}"; do
         [[ -z "$drive" ]] && continue
 
-        result="$(/scripts/smart_check.sh "$drive")"
+        result="$("$SMART_CHECK_BIN" "$drive")"
         log "scan: $result"
 
-        # Parse "OK <drive>" or "FAIL <drive> <reason>" without forking
-        read -r status _ reason <<< "$result"
-        [[ -z "$reason" ]] && reason="-"
+        smart_parse_result "$result"
+        status="$SMART_RESULT_STATUS"
+        severity="$SMART_RESULT_SEVERITY"
+        reason="$SMART_RESULT_REASON"
 
         last_status="$(state_get "$drive" status)"
+        last_severity="$(state_get "$drive" severity)"
+        last_reason="$(state_get "$drive" reason)"
         last_alert="$(state_get "$drive" last_alert)"
         [[ -z "$last_alert" ]] && last_alert=0
-
-        if [[ "$status" == "FAIL" ]]; then
-            all_ok=0
-            if [[ "$last_status" != "FAIL" ]]; then
-                log "STATE: $drive OK->FAIL — burst alerting"
-                burst_alert "$drive" "$reason"
-                state_set "$drive" "FAIL" "$now"
-            else
-                if (( now - last_alert >= REMINDER_INTERVAL )); then
-                    log "STATE: $drive still FAIL — reminder alerting"
-                    reminder_alert "$drive" "$reason"
-                    state_set "$drive" "FAIL" "$now"
-                else
-                    log "STATE: $drive still FAIL — within reminder window, no alert"
-                fi
-            fi
-        else
-            if [[ "$last_status" == "FAIL" ]]; then
-                log "STATE: $drive FAIL->OK — recovery alert"
-                recovery_alert "$drive"
-            fi
-            state_set "$drive" "OK" "$now"
+        if [[ -z "$last_severity" ]]; then
+            [[ "$last_status" == "OK" ]] && last_severity="ok" || last_severity="$severity"
         fi
+        if [[ -z "$last_reason" && -n "$last_status" && "$last_status" != "OK" ]]; then
+            last_reason="$reason"
+        fi
+
+        action="$(smart_alert_action "$SMART_POLICY" "$status" "$severity" "$reason" "$last_status" "$last_severity" "$last_reason" "$last_alert" "$now" "$REMINDER_INTERVAL")"
+        alert_time="$last_alert"
+
+        if [[ "$status" != "OK" ]]; then
+            all_ok=0
+        fi
+
+        case "$action" in
+            burst)
+                log "STATE: $drive ${last_severity:-unknown}->${severity} — burst alerting"
+                burst_alert "$drive" "$severity" "$reason"
+                alert_time="$now"
+                ;;
+            alert)
+                log "STATE: $drive ${last_severity:-unknown}->${severity} — single alert"
+                severity_alert "$drive" "$severity" "$reason"
+                alert_time="$now"
+                ;;
+            reminder)
+                log "STATE: $drive still ${severity} — reminder alerting"
+                reminder_alert "$drive" "$severity" "$reason"
+                alert_time="$now"
+                ;;
+            recovery)
+                log "STATE: $drive ${last_severity:-non-OK}->OK — recovery alert"
+                recovery_alert "$drive"
+                alert_time="$now"
+                ;;
+            none)
+                [[ "$status" != "OK" ]] && log "STATE: $drive still ${severity} — within reminder window, no alert"
+                ;;
+        esac
+
+        state_set "$drive" "$status" "$severity" "$reason" "$alert_time"
     done
 
     # Heartbeat: every HEARTBEAT_EVERY scans, if all drives OK, send "awesome".
@@ -192,7 +265,7 @@ scan_once() {
 }
 
 main() {
-    log "smart-watcher starting; host=${HOST_NAME} interval=${SCAN_INTERVAL}s burst=${BURST_COUNT}@${BURST_DELAY}s reminder=${REMINDER_INTERVAL}s"
+    log "smart-watcher starting; host=${HOST_NAME} policy=${SMART_POLICY} interval=${SCAN_INTERVAL}s burst=${BURST_COUNT}@${BURST_DELAY}s reminder=${REMINDER_INTERVAL}s"
 
     if [[ -z "${TELEGRAM_BOT_TOKEN:-}" ]]; then
         log "FATAL: TELEGRAM_BOT_TOKEN not set"
@@ -206,7 +279,7 @@ main() {
     log "monitoring ${n_drives} drives"
 
     # Launch bot poller in background. It handles /scan etc.
-    /scripts/bot_poller.sh &
+    "${SCRIPTS_DIR}/bot_poller.sh" &
     BOT_PID=$!
     log "bot_poller started pid=${BOT_PID}"
 
@@ -220,11 +293,13 @@ main() {
         # If bot_poller died, restart it.
         if ! kill -0 "$BOT_PID" 2>/dev/null; then
             log "bot_poller died; restarting"
-            /scripts/bot_poller.sh &
+            "${SCRIPTS_DIR}/bot_poller.sh" &
             BOT_PID=$!
         fi
         sleep "$SCAN_INTERVAL"
     done
 }
 
-main "$@"
+if [[ "${ENTRYPOINT_LIB_ONLY:-0}" != "1" ]]; then
+    main "$@"
+fi

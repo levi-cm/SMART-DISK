@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install shell tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes jq shellcheck
+
+      - name: Static checks
+        run: |
+          shellcheck scripts/*.sh tests/*.sh
+          bash -n scripts/*.sh tests/*.sh
+          find tests/fixtures -type f -name '*.json' ! -name malformed.json -print0 | xargs -0 -n1 jq -e . >/dev/null
+          jq -n -f scripts/parse_updates.jq >/dev/null
+
+      - name: Tests
+        run: |
+          bash tests/smart_check_test.sh
+          bash tests/alert_state_test.sh
+          bash tests/message_accuracy_test.sh
+          bash tests/scan_report_test.sh
+          bash tests/open_source_readiness_test.sh
+
+      - name: Compose render
+        run: |
+          cp .env.example .env
+          docker compose config --quiet

@@ -33,6 +33,28 @@ fixture() {
 tmpdir="$(mktemp -d)"
 trap 'rm -rf "$tmpdir"' EXIT
 
+FIXTURES="${ROOT_DIR}/tests/fixtures/smartctl"
+
+assert_case() {
+    local policy="$1" fixture_name="$2" expected="$3"
+    local out
+    out="$(SMART_POLICY="$policy" run_case "${FIXTURES}/${fixture_name}")"
+    [[ "$out" == "$expected" ]] || fail "${policy}/${fixture_name}: expected '${expected}', got: '${out}'"
+}
+
+assert_case paranoid ata_healthy.json "OK /dev/test"
+assert_case paranoid nvme_healthy.json "OK /dev/test"
+assert_case paranoid ata_historical_counters.json "FAIL /dev/test severity=advisory|UDMA_CRC_Error_Count(199)=3|smart_error_log_count=2"
+assert_case balanced ata_historical_counters.json "WARN /dev/test severity=advisory|UDMA_CRC_Error_Count(199)=3|smart_error_log_count=2"
+assert_case paranoid nvme_historical_counters.json "FAIL /dev/test severity=advisory|nvme_error_log_entries=7"
+assert_case balanced nvme_historical_counters.json "WARN /dev/test severity=advisory|nvme_error_log_entries=7"
+assert_case paranoid ata_pending_sectors.json "FAIL /dev/test severity=critical|Current_Pending_Sector(197)=2"
+assert_case balanced ata_pending_sectors.json "FAIL /dev/test severity=critical|Current_Pending_Sector(197)=2"
+assert_case balanced ata_self_test_failure.json "FAIL /dev/test severity=critical|self_test_failures=1"
+assert_case balanced ata_temperature.json "FAIL /dev/test severity=degraded|temp=51C>50C"
+assert_case balanced nvme_wear.json "FAIL /dev/test severity=degraded|nvme_percentage_used=85>=80"
+assert_case balanced malformed.json "FAIL /dev/test severity=critical|jq_parse_failed"
+
 fixture "${tmpdir}/exit-warning.json" <<'JSON'
 {
   "smartctl": {"exit_status": 4},
@@ -42,7 +64,7 @@ fixture "${tmpdir}/exit-warning.json" <<'JSON'
 }
 JSON
 out="$(run_case "${tmpdir}/exit-warning.json")"
-[[ "$out" == "FAIL /dev/test smartctl_exit_status=4" ]] || fail "expected smartctl exit warning, got: $out"
+[[ "$out" == "FAIL /dev/test severity=advisory|smartctl_exit_status=4" ]] || fail "expected smartctl exit warning, got: $out"
 
 fixture "${tmpdir}/crc-error.json" <<'JSON'
 {
@@ -57,7 +79,7 @@ fixture "${tmpdir}/crc-error.json" <<'JSON'
 }
 JSON
 out="$(run_case "${tmpdir}/crc-error.json")"
-[[ "$out" == "FAIL /dev/test UDMA_CRC_Error_Count(199)=1" ]] || fail "expected CRC error, got: $out"
+[[ "$out" == "FAIL /dev/test severity=advisory|UDMA_CRC_Error_Count(199)=1" ]] || fail "expected CRC error, got: $out"
 
 fixture "${tmpdir}/warm.json" <<'JSON'
 {
@@ -68,7 +90,7 @@ fixture "${tmpdir}/warm.json" <<'JSON'
 }
 JSON
 out="$(run_case "${tmpdir}/warm.json")"
-[[ "$out" == "FAIL /dev/test temp=51C>50C" ]] || fail "expected paranoid temp warning, got: $out"
+[[ "$out" == "FAIL /dev/test severity=degraded|temp=51C>50C" ]] || fail "expected paranoid temp warning, got: $out"
 
 fixture "${tmpdir}/normal-counters.json" <<'JSON'
 {

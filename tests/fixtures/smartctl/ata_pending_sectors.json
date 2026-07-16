@@ -1,0 +1,12 @@
+{
+  "smartctl": {"exit_status": 0},
+  "smart_status": {"passed": true},
+  "temperature": {"current": 32},
+  "ata_smart_attributes": {
+    "table": [
+      {"id": 197, "name": "Current_Pending_Sector", "value": 100, "worst": 100, "thresh": 0, "raw": {"value": 2}}
+    ]
+  },
+  "ata_smart_error_log": {"summary": {"count": 0}},
+  "ata_smart_self_test_log": {"standard": {"table": []}}
+}

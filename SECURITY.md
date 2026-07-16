@@ -26,4 +26,6 @@ If the token is ever committed, pasted into a public issue, uploaded in a zip, o
 
 This container needs direct block-device access for `smartctl`. Keep the `devices:` list explicit and only map drives you intend to monitor. Avoid mounting `/dev` wholesale unless you understand the risk.
 
-The container drops default Linux capabilities, adds only the SMART-related capabilities used by this setup, runs with `no-new-privileges`, uses read-only config, and keeps writable state under `/state`.
+The container drops default Linux capabilities, retains `SYS_RAWIO` and `SYS_ADMIN` for supported raw ATA/NVMe `smartctl` access, runs with `no-new-privileges`, uses read-only config, and keeps writable state under `/state`. Do not remove either retained capability without testing every supported controller and drive path; ioctl requirements vary by hardware and transport.
+
+SMART evidence and Telegram wording use `advisory`, `degraded`, and `critical` levels. Historical counters remain visible warnings but are not presented as proof of imminent failure. The default `SMART_POLICY=paranoid` keeps alert coverage and configurable bursts; `balanced` changes alert intensity, not data collection or raw-device access.

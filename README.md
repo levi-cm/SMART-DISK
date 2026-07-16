@@ -1,10 +1,16 @@
 # SMART Watcher
 
-Dockerized SMART disk monitoring with Telegram alerts. The container runs scheduled `smartctl` checks, sends burst alerts on failure, supports `/scan` and `/heartbeat` Telegram commands, and stores runtime state in `state/`.
+Dockerized SMART disk monitoring with Telegram alerts. The container runs scheduled `smartctl` checks, sends configurable burst alerts, supports `/scan` and `/heartbeat` Telegram commands, and stores runtime state in `state/`.
 
 ## What It Monitors
 
-The checker is intentionally paranoid. It alerts on nonzero `smartctl` status, failed overall SMART health, meaningful error counters, SMART error-log entries, failed self-tests, NVMe critical warnings, NVMe media errors, low NVMe spare, high NVMe wear, and temperatures above the configured limit.
+The default `paranoid` policy preserves the original behavior: every detected finding alerts, including nonzero `smartctl` status, failed overall SMART health, meaningful error counters, SMART error-log entries, failed self-tests, NVMe critical warnings, NVMe media errors, low NVMe spare, high NVMe wear, and temperatures above the configured limit.
+
+Findings carry severity instead of being described as certain drive failure:
+
+- `advisory`: historical or cumulative evidence such as old error-log entries or CRC counters. Investigate trends and cabling; this is not proof of imminent failure.
+- `degraded`: active margin concerns such as excessive temperature, reallocated sectors, low SSD life, or high NVMe wear.
+- `critical`: active failure indicators such as failed health, pending or uncorrectable sectors, failed self-tests, NVMe media errors, low spare, or unreadable SMART data.
 
 ## Files
 
@@ -32,6 +38,9 @@ Edit `.env`:
 ```env
 TELEGRAM_BOT_TOKEN=replace-with-your-real-token
 HOST_NAME=smart-watcher
+SMART_POLICY=paranoid
+BURST_COUNT=10
+BURST_DELAY=30
 ```
 
 Edit `config/users.conf` and put one authorized Telegram chat ID per line. Only these chats can use `/scan`, `/heartbeat`, and `/help`.
@@ -116,13 +125,16 @@ These environment values can be set in `.env` or `docker-compose.yml`:
 
 - `TELEGRAM_BOT_TOKEN`: required Telegram bot token.
 - `HOST_NAME`: label used in Telegram messages.
+- `SMART_POLICY`: `paranoid` by default; `balanced` keeps all warnings but reserves burst alerts for critical findings and sends one alert for new advisory/degraded findings.
 - `SCAN_INTERVAL`: seconds between automatic scans, default `21600`.
-- `BURST_COUNT`: number of first-failure alert messages, default `10`.
+- `BURST_COUNT`: number of messages in a burst alert, default `10`.
 - `BURST_DELAY`: seconds between burst messages, default `30`.
 - `REMINDER_INTERVAL`: seconds between repeated degraded-state reminders, default `86400`.
 - `HEARTBEAT_EVERY`: send healthy heartbeat every N scans, default `4`; set `0` to disable scheduled heartbeats.
 - `TEMP_LIMIT`: maximum accepted drive temperature in Celsius, default `50`.
 - `SSD_LIFE_MIN`: minimum accepted ATA SSD life attribute value, default `90`.
+
+`paranoid` remains the explicit default and bursts on every new or changed non-OK finding. `balanced` sends a single alert for advisory/degraded transitions and still bursts on critical findings. Both policies retain reminders, suppress unchanged alerts inside `REMINDER_INTERVAL`, send recovery messages, and withhold healthy heartbeats whenever any drive is non-OK. Set `BURST_COUNT=10` and `BURST_DELAY=30` for the original burst behavior; other positive values remain supported.
 
 ## Publishing Safely
 
@@ -147,7 +159,12 @@ Run checks:
 
 ```bash
 bash tests/smart_check_test.sh
+bash tests/alert_state_test.sh
+bash tests/message_accuracy_test.sh
+bash tests/scan_report_test.sh
 bash tests/open_source_readiness_test.sh
+shellcheck scripts/*.sh tests/*.sh
+bash -n scripts/*.sh tests/*.sh
 docker compose config --quiet
 docker compose build
 ```
