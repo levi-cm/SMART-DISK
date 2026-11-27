@@ -152,14 +152,23 @@ done
 report_collect "$w"
 assert_eq "$REPORT_WORST" "none" "worst severity with no drives"
 
-# --- A hung drive: the read is cut off and the drive reported critical ----------------
-printf '#!/usr/bin/env bash\nexec sleep 30\n' > "${tmpdir}/hung-smartctl"
+# --- Hung drives: the read is cut off and the drive reported critical -----------------
+# /dev/sdy ignores TERM, as a drive stuck in error recovery can, so timeout
+# needs KILL (exit 137 instead of 124).
+cat > "${tmpdir}/hung-smartctl" <<'SH'
+#!/usr/bin/env bash
+[[ "$3" == /dev/sdy ]] && trap '' TERM
+exec sleep 30
+SH
 chmod +x "${tmpdir}/hung-smartctl"
-hung_records="$(SMARTCTL_BIN="${tmpdir}/hung-smartctl" SMARTCTL_TIMEOUT=1 collect /dev/sdx)"
+hung_records="$(SMARTCTL_BIN="${tmpdir}/hung-smartctl" SMARTCTL_TIMEOUT=1 collect /dev/sdx /dev/sdy 2>/dev/null)"
 hung="$(report_render scan "$hung_records" "$GENERATED")"
-assert_contains "$hung" "🔴 /dev/sdx — CRITICAL" "hung drive verdict"
-assert_contains "$hung" "   • smartctl_timeout=1s" "hung drive evidence"
-assert_contains "$hung" "   🌡 — · ⏱ —" "hung drive metrics"
+for drive in /dev/sdx /dev/sdy; do
+    card="$(card_of "$hung" "$drive")"
+    assert_contains "$card" "🔴 ${drive} — CRITICAL" "hung drive verdict (${drive})"
+    assert_contains "$card" "   • smartctl_timeout=1s" "hung drive evidence (${drive})"
+    assert_contains "$card" "   🌡 — · ⏱ —" "hung drive metrics (${drive})"
+done
 
 # --- Long report: split under Telegram's limit at card boundaries ---------------------
 long_records="${tmpdir}/long.jsonl"

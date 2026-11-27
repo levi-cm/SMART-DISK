@@ -29,9 +29,10 @@ report_collect() {
         rc=0
         start="$SECONDS"
         timeout -k 5 "$limit" "$SMARTCTL_BIN" -a --json=o "$drive" < /dev/null > "$snap" 2>/dev/null || rc=$?
-        # smartctl's own exit code is a bit mask that can also be 124, so
-        # check the clock too.
-        if (( rc == 124 && SECONDS - start >= limit )); then
+        # timeout exits 124, or 137 when smartctl ignored TERM and needed
+        # KILL. smartctl's own exit code is a bit mask that can take either
+        # value, so check the clock too.
+        if (( (rc == 124 || rc == 137) && SECONDS - start >= limit )); then
             verdict="FAIL ${drive} severity=critical|smartctl_timeout=${limit}s"
         else
             verdict="$("$SMART_CHECK_BIN" "$drive" "$snap" < /dev/null)"

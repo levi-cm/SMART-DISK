@@ -120,15 +120,18 @@ assert_eq "$(tg_calls 'map(.method) | join(",")')" "sendMessage,sendMessage,send
 assert_eq "$(tg_calls -r '.[3].fields.text')" "⚠️ The raw output file could not be uploaded. Check the container logs." "/full upload failure notice"
 [[ -z "$(ls -A "$TMPDIR")" ]] || fail "failed /full left temp files: $(ls -A "$TMPDIR")"
 
-# A drive missing from the records gives a warning, never a report that looks complete.
-reset_calls
+# Drives missing from the records (an empty or missing records file) give a
+# warning, never a report that looks complete, and never stop the poller.
 eval "real_$(declare -f report_collect)"
-report_collect() { real_report_collect "$@"; : > "$1/records.jsonl"; }
-handle_command "$AUTH" "/full"
+for damage in ': >' 'rm -f --'; do
+    reset_calls
+    eval "report_collect() { real_report_collect \"\$@\"; ${damage} \"\$1/records.jsonl\"; }"
+    handle_command "$AUTH" "/full"
+    assert_eq "$(tg_calls 'map(.method) | join(",")')" "sendMessage,sendMessage" "/full with records damaged by '${damage}'"
+    assert_eq "$(tg_calls -r '.[1].fields.text')" "⚠️ SMART full on lab_host*[1] failed: the report could not be built. Check the container logs." "missing records warning ('${damage}')"
+    [[ -z "$(ls -A "$TMPDIR")" ]] || fail "failed report left temp files: $(ls -A "$TMPDIR")"
+done
 eval "$(declare -f real_report_collect | sed '1s/^real_//')"
-assert_eq "$(tg_calls 'map(.method) | join(",")')" "sendMessage,sendMessage" "/full with missing records"
-assert_eq "$(tg_calls -r '.[1].fields.text')" "⚠️ SMART full on lab_host*[1] failed: the report could not be built. Check the container logs." "missing records warning"
-[[ -z "$(ls -A "$TMPDIR")" ]] || fail "failed report left temp files: $(ls -A "$TMPDIR")"
 
 # --- Advisory-only drives are not labelled critical -----------------------------------
 reset_calls

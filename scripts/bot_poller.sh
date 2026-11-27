@@ -212,7 +212,7 @@ drive_count_label() {
 # file with the evidence and raw smartctl text. Each drive is read once.
 handle_report() {
     local chat_id="$1" mode="$2"
-    local -a drives records
+    local -a drives records=()
     local n workdir generated text caption
     mapfile -t drives < <(load_drives)
     n="${#drives[@]}"
@@ -236,7 +236,7 @@ handle_report() {
     report_collect "$workdir" "${drives[@]}"
     # A drive missing from the records (say /tmp filled up) must not leave a
     # report that looks complete, so send a warning and nothing else.
-    mapfile -t records < "${workdir}/records.jsonl"
+    mapfile -t records 2>/dev/null < "${workdir}/records.jsonl" || true
     text=""
     if (( ${#records[@]} == n )); then
         text="$(report_render "$mode" "${workdir}/records.jsonl" "$generated")"
