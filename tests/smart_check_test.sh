@@ -140,4 +140,15 @@ out="$(SMARTCTL_BIN="${tmpdir}/smartctl-must-not-run" SMARTCTL_CALLS="${tmpdir}/
 out="$(bash "${ROOT_DIR}/scripts/smart_check.sh" /dev/test "${tmpdir}/missing-snapshot.json")"
 [[ "$out" == "FAIL /dev/test severity=critical|smartctl_no_output" ]] || fail "missing snapshot, got: $out"
 
+# ATA attribute 194 packs min/max above the low byte. Without
+# temperature.current, the verdict uses the low byte, as the report card does.
+jq 'del(.temperature) | (.ata_smart_attributes.table[] | select(.id == 194) | .raw.value) = 47245361178' \
+    "${ROOT_DIR}/tests/fixtures/reports/ata_healthy.json" > "${tmpdir}/packed-temp.json"
+out="$(run_case "${tmpdir}/packed-temp.json")"
+[[ "$out" == "OK /dev/test" ]] || fail "packed ATA temperature (26 C) flagged, got: $out"
+jq 'del(.temperature) | (.ata_smart_attributes.table[] | select(.id == 194) | .raw.value) = 47245361207' \
+    "${ROOT_DIR}/tests/fixtures/reports/ata_healthy.json" > "${tmpdir}/packed-hot.json"
+out="$(run_case "${tmpdir}/packed-hot.json")"
+[[ "$out" == "FAIL /dev/test severity=degraded|temp=55C>50C" ]] || fail "packed ATA temperature (55 C), got: $out"
+
 echo "smart_check_test: ok"

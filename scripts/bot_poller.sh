@@ -57,10 +57,6 @@ set_last_update_id() {
     state_apply '._meta = (._meta // {}) | ._meta.last_update_id = $v' --argjson v "$1"
 }
 
-heartbeat_enabled() {
-    state_heartbeat_enabled
-}
-
 set_heartbeat_enabled() {
     local val="$1"  # "true" or "false"
     if [[ "$val" == "true" ]]; then
@@ -118,7 +114,8 @@ register_commands() {
     if tg_api setMyCommands 15 --data-urlencode "commands=$(bot_commands_json)" >/dev/null 2>&1; then
         log "registered ${#BOT_COMMANDS[@]} bot commands"
     else
-        log "setMyCommands failed; command menu not updated"
+        log "setMyCommands failed; will retry after the next successful poll"
+        return 1
     fi
 }
 
@@ -147,7 +144,7 @@ JSON
 
 heartbeat_status_text() {
     local state
-    state="$(heartbeat_enabled)"
+    state="$(state_heartbeat_enabled)"
     local human="❌ *DISABLED* — only non-OK SMART alerts will be sent."
     [[ "$state" == "true" ]] && human="✅ *ENABLED* — daily 'everything awesome' messages active."
 
@@ -190,7 +187,7 @@ handle_callback() {
             ;;
         hb:status)
             local state
-            state="$(heartbeat_enabled)"
+            state="$(state_heartbeat_enabled)"
             if [[ "$state" == "true" ]]; then
                 tg_answer_callback "$cb_id" "Heartbeat is currently ENABLED" "true"
             else
@@ -215,8 +212,8 @@ drive_count_label() {
 # file with the evidence and raw smartctl text. Each drive is read once.
 handle_report() {
     local chat_id="$1" mode="$2"
-    local -a drives
-    local n workdir generated text worst caption
+    local -a drives records
+    local n workdir generated text caption
     mapfile -t drives < <(load_drives)
     n="${#drives[@]}"
     log "/${mode} from authorized chat (${n} drives)"
@@ -237,17 +234,26 @@ handle_report() {
 
     generated="$(date -u '+%Y-%m-%d %H:%M UTC')"
     report_collect "$workdir" "${drives[@]}"
-    text="$(report_render "$mode" "${workdir}/records.jsonl" "$generated")"
+    # A drive missing from the records (say /tmp filled up) must not leave a
+    # report that looks complete, so send a warning and nothing else.
+    mapfile -t records < "${workdir}/records.jsonl"
+    text=""
+    if (( ${#records[@]} == n )); then
+        text="$(report_render "$mode" "${workdir}/records.jsonl" "$generated")"
+    else
+        log "/${mode}: ${#records[@]} of ${n} drive records written"
+    fi
     if [[ -z "$text" ]]; then
-        log "/${mode} report render failed"
-        text="⚠️ SMART ${mode} on ${HOST_NAME}: the report could not be rendered. Check the container logs."
+        log "/${mode} report failed"
+        tg_send_text_to "$chat_id" "⚠️ SMART ${mode} on ${HOST_NAME} failed: the report could not be built. Check the container logs." || true
+        rm -rf -- "$workdir"
+        return
     fi
     tg_send_text_to "$chat_id" "$text" || log "/${mode} report send failed"
 
     if [[ "$mode" == "full" ]] && (( n > 0 )); then
-        worst="$(report_worst "${workdir}/records.jsonl")"
         report_write_markdown "${workdir}/records.jsonl" "${workdir}/report.md" "$text"
-        caption="📄 Full SMART report · ${HOST_NAME} · worst: $(smart_severity_label "$worst")"
+        caption="📄 Full SMART report · ${HOST_NAME} · worst: $(smart_severity_label "$REPORT_WORST")"
         if tg_send_document_to "$chat_id" "${workdir}/report.md" \
             "smart-full-${HOST_NAME}-$(date -u +%Y%m%d-%H%M%S).md" "$caption"; then
             log "/full attachment sent"
@@ -292,7 +298,8 @@ main() {
     fi
 
     state_init
-    register_commands
+    local commands_registered=0
+    register_commands && commands_registered=1
 
     local offset
     offset="$(get_last_update_id)"
@@ -328,6 +335,9 @@ main() {
             continue
         fi
         backoff=0
+        if (( ! commands_registered )); then
+            register_commands && commands_registered=1
+        fi
 
         # Stream all updates from a single jq pass via process substitution.
         # NUL-terminated records, US-separated fields. Bash $(...) would strip

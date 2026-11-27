@@ -54,7 +54,7 @@ fi
 # 200 Multi_Zone_Error_Rate
 
 if [[ -n "$SNAPSHOT" ]]; then
-    JSON="$(cat -- "$SNAPSHOT" 2>/dev/null || true)"
+    { JSON="$(< "$SNAPSHOT")"; } 2>/dev/null || JSON=""
 else
     JSON="$("$SMARTCTL_BIN" -a -j "$DRIVE" 2>/dev/null || true)"
 fi
@@ -79,7 +79,9 @@ DATA="$(jq -r '
       (if .smart_status then "1" else "0" end),
       (.smart_status.passed // false | tostring),
       (.temperature.current
-        // (.ata_smart_attributes.table[]? | select(.id == 194) | .raw.value)
+        // (.ata_smart_attributes.table[]? | select(.id == 194) | .raw.value
+              # The raw value packs min/max above the low byte (current).
+              | if type == "number" and . > 255 then . % 256 else . end)
         // "" | tostring),
       ((.ata_smart_attributes.table // [])
         | map(select(.id as $i | advisory_attr_ids | index($i)))

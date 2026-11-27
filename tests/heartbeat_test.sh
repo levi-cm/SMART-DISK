@@ -88,9 +88,9 @@ assert_contains "$out" "SMART CRITICAL" "critical alert still sent"
 
 # The bot's toggle and status agree with what the scheduler does.
 printf '{}\n' > "$STATE_FILE"
-assert_eq "$(bot heartbeat_enabled)" "true" "bot default heartbeat state"
+assert_eq "$(bot state_heartbeat_enabled)" "true" "bot default heartbeat state"
 bot set_heartbeat_enabled false
-assert_eq "$(bot heartbeat_enabled)" "false" "bot state after disabling"
+assert_eq "$(bot state_heartbeat_enabled)" "false" "bot state after disabling"
 assert_eq "$(jq -c '._meta.heartbeat_enabled' "$STATE_FILE")" "false" "stored heartbeat flag"
 assert_contains "$(bot heartbeat_status_text)" "DISABLED" "bot status text after disabling"
 
@@ -99,7 +99,7 @@ printf '/dev/sda\n' > "$DRIVES_FILE"
 out="$(scheduled_scan)"
 assert_not_contains "$out" "$heartbeat" "heartbeat after /heartbeat → Disable"
 bot set_heartbeat_enabled true
-assert_eq "$(bot heartbeat_enabled)" "true" "bot state after enabling"
+assert_eq "$(bot state_heartbeat_enabled)" "true" "bot state after enabling"
 assert_contains "$(scheduled_scan)" "$heartbeat" "heartbeat after /heartbeat → Enable"
 
 echo "heartbeat_test: ok"

@@ -58,7 +58,11 @@ if [[ "$scan" != "$(cat "$golden")" ]]; then
 fi
 assert_contains "$scan" "Worst: CRITICAL · 4 drives" "overview worst severity"
 assert_contains "$scan" "🟢 1 good · 🟡 1 advisory · 🟠 1 degraded · 🔴 1 critical" "overview counts"
-assert_eq "$(report_worst "$records")" "critical" "report_worst"
+w="$(mktemp -d "${tmpdir}/worst.XXXXXX")"
+report_collect "$w" "$PUNCT_DRIVE" /dev/sdb /dev/nvme0n1
+assert_eq "$REPORT_WORST" "degraded" "worst severity without the critical drive"
+report_collect "$w" /dev/sdb /dev/sdc /dev/sdh
+assert_eq "$REPORT_WORST" "critical" "worst severity with a critical drive"
 
 # Plain text: punctuation in paths and labels is shown as is.
 assert_contains "$scan" "🟢 ${PUNCT_DRIVE} — GOOD" "literal drive path"
@@ -145,7 +149,17 @@ assert_contains "$empty" "No drives configured: nothing was checked." "empty rep
 for word in GOOD healthy "🟢" "Worst:"; do
     assert_not_contains "$empty" "$word" "empty report claims health"
 done
-assert_eq "$(report_worst "${tmpdir}/empty.jsonl")" "none" "report_worst with no drives"
+report_collect "$w"
+assert_eq "$REPORT_WORST" "none" "worst severity with no drives"
+
+# --- A hung drive: the read is cut off and the drive reported critical ----------------
+printf '#!/usr/bin/env bash\nexec sleep 30\n' > "${tmpdir}/hung-smartctl"
+chmod +x "${tmpdir}/hung-smartctl"
+hung_records="$(SMARTCTL_BIN="${tmpdir}/hung-smartctl" SMARTCTL_TIMEOUT=1 collect /dev/sdx)"
+hung="$(report_render scan "$hung_records" "$GENERATED")"
+assert_contains "$hung" "🔴 /dev/sdx — CRITICAL" "hung drive verdict"
+assert_contains "$hung" "   • smartctl_timeout=1s" "hung drive evidence"
+assert_contains "$hung" "   🌡 — · ⏱ —" "hung drive metrics"
 
 # --- Long report: split under Telegram's limit at card boundaries ---------------------
 long_records="${tmpdir}/long.jsonl"

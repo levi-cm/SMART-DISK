@@ -167,6 +167,7 @@ These environment values can be set in `.env` or `docker-compose.yml`:
 - `TEMP_LIMIT`: maximum accepted drive temperature in Celsius, default `50`.
 - `SSD_LIFE_MIN`: minimum accepted ATA SSD life attribute value, default `90`.
 - `TELEGRAM_API_BASE`: Bot API base URL, default `https://api.telegram.org`. Set it for a self-hosted Bot API server; the offline smoke test uses it to reach its mock. Every request carries the bot token, so only point it at a server you control.
+- `SMARTCTL_TIMEOUT`: seconds a `/scan` or `/full` read of one drive may take before it is reported critical (`smartctl_timeout`), default `120`.
 - `TG_CHUNK_LIMIT`: maximum characters (UTF-16 code units) per report message, default `3800`, capped at Telegram's `4096`.
 
 `paranoid` remains the explicit default and bursts on every new or changed non-OK finding. `balanced` sends a single alert for advisory/degraded transitions and still bursts on critical findings. Both policies retain reminders, suppress unchanged alerts inside `REMINDER_INTERVAL`, send recovery messages, and withhold healthy heartbeats whenever any drive is non-OK. Set `BURST_COUNT=10` and `BURST_DELAY=30` for the original burst behavior; other positive values remain supported.

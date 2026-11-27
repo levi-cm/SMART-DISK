@@ -120,6 +120,16 @@ assert_eq "$(tg_calls 'map(.method) | join(",")')" "sendMessage,sendMessage,send
 assert_eq "$(tg_calls -r '.[3].fields.text')" "⚠️ The raw output file could not be uploaded. Check the container logs." "/full upload failure notice"
 [[ -z "$(ls -A "$TMPDIR")" ]] || fail "failed /full left temp files: $(ls -A "$TMPDIR")"
 
+# A drive missing from the records gives a warning, never a report that looks complete.
+reset_calls
+eval "real_$(declare -f report_collect)"
+report_collect() { real_report_collect "$@"; : > "$1/records.jsonl"; }
+handle_command "$AUTH" "/full"
+eval "$(declare -f real_report_collect | sed '1s/^real_//')"
+assert_eq "$(tg_calls 'map(.method) | join(",")')" "sendMessage,sendMessage" "/full with missing records"
+assert_eq "$(tg_calls -r '.[1].fields.text')" "⚠️ SMART full on lab_host*[1] failed: the report could not be built. Check the container logs." "missing records warning"
+[[ -z "$(ls -A "$TMPDIR")" ]] || fail "failed report left temp files: $(ls -A "$TMPDIR")"
+
 # --- Advisory-only drives are not labelled critical -----------------------------------
 reset_calls
 printf '%s\n' /dev/sdb > "$DRIVES_FILE"
@@ -130,6 +140,10 @@ assert_contains "$advisory" "Worst: ADVISORY · 1 drive" "advisory overview"
 assert_not_contains "$advisory" "CRITICAL" "advisory report mislabeled"
 
 # --- One command list: /help, setMyCommands and dispatch ------------------------------
+reset_calls
+if TG_FAIL_METHOD=setMyCommands register_commands; then
+    fail "register_commands hid a failed setMyCommands (main retries on failure)"
+fi
 reset_calls
 register_commands
 assert_eq "$(tg_calls -r '.[0].method')" "setMyCommands" "setMyCommands call"

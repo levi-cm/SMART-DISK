@@ -7,20 +7,35 @@
 # Needs smart_result_lib.sh plus SCRIPTS_DIR, SMARTCTL_BIN, SMART_CHECK_BIN
 # and HOST_NAME from the caller.
 
+# A drive stuck in error recovery can hang smartctl, and the bot polls
+# Telegram in the same loop, so each report read gets a time limit.
+SMARTCTL_TIMEOUT="${SMARTCTL_TIMEOUT:-120}"
+
 # report_collect <workdir> [drive...]
 # Saves <workdir>/snapshot-N.json per drive and appends one JSON record per
-# drive to <workdir>/records.jsonl.
+# drive to <workdir>/records.jsonl. Sets REPORT_WORST to the highest severity
+# collected, or "none" with no drives.
 report_collect() {
     local workdir="$1"
     shift
-    local drive snap verdict severity reason i=0
+    local drive snap verdict severity reason rc start limit="$SMARTCTL_TIMEOUT" i=0
     local -a record_args
+    [[ "$limit" =~ ^[1-9][0-9]*$ ]] || limit=120
+    REPORT_WORST="none"
     : > "${workdir}/records.jsonl"
     for drive in "$@"; do
         i=$((i + 1))
         snap="${workdir}/snapshot-${i}.json"
-        "$SMARTCTL_BIN" -a --json=o "$drive" < /dev/null > "$snap" 2>/dev/null || true
-        verdict="$("$SMART_CHECK_BIN" "$drive" "$snap" < /dev/null)"
+        rc=0
+        start="$SECONDS"
+        timeout -k 5 "$limit" "$SMARTCTL_BIN" -a --json=o "$drive" < /dev/null > "$snap" 2>/dev/null || rc=$?
+        # smartctl's own exit code is a bit mask that can also be 124, so
+        # check the clock too.
+        if (( rc == 124 && SECONDS - start >= limit )); then
+            verdict="FAIL ${drive} severity=critical|smartctl_timeout=${limit}s"
+        else
+            verdict="$("$SMART_CHECK_BIN" "$drive" "$snap" < /dev/null)"
+        fi
         smart_parse_result "$verdict"
         severity="$SMART_RESULT_SEVERITY"
         reason="$SMART_RESULT_REASON"
@@ -34,6 +49,10 @@ report_collect() {
         if [[ -z "$verdict" ]]; then
             severity="critical"
             reason="smart_check_no_verdict"
+        fi
+        if [[ "$REPORT_WORST" == "none" ]] \
+            || (( $(smart_severity_rank "$severity") > $(smart_severity_rank "$REPORT_WORST") )); then
+            REPORT_WORST="$severity"
         fi
         record_args=(
             --arg drive "$drive"
@@ -60,15 +79,6 @@ report_render() {
         --arg host "$HOST_NAME" \
         --arg generated "$generated" \
         -f "${SCRIPTS_DIR}/report_render.jq" "$records"
-}
-
-# report_worst <records.jsonl>: highest severity, or "none" with no drives.
-report_worst() {
-    jq -r -s '
-        if length == 0 then "none"
-        else (map({"ok": 0, "advisory": 1, "degraded": 2, "critical": 3}[.severity] // 3) | max) as $r
-            | ["ok", "advisory", "degraded", "critical"][$r]
-        end' "$1"
 }
 
 # report_raw_text <snapshot>
