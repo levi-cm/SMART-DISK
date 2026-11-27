@@ -17,13 +17,11 @@ export SCRIPTS_DIR="${ROOT_DIR}/scripts"
 source "${ROOT_DIR}/scripts/telegram.sh"
 record_tg_api "$tmpdir"
 
+# repeat <string> <count>: <string> repeated <count> times, without a loop.
 repeat() {
-    local s="$1" n="$2" out=""
-    while (( n > 0 )); do
-        out+="$s"
-        n=$((n - 1))
-    done
-    printf '%s' "$out"
+    local out
+    printf -v out '%*s' "$2" ''
+    printf '%s' "${out// /"$1"}"
 }
 
 # send_case <name> <limit> <text>

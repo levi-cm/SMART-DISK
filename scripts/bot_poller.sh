@@ -110,9 +110,8 @@ tg_answer_callback() {
 # ===== Commands menu + help (both from BOT_COMMANDS) =====
 
 bot_commands_json() {
-    printf '%s\n' "${BOT_COMMANDS[@]}" | jq -n -c --rawfile list /dev/stdin '
-        $list | split("\n") | map(select(length > 0) | index("|") as $i
-            | {command: .[:$i], description: .[$i + 1:]})'
+    jq -n -c '$ARGS.positional | map(index("|") as $i | {command: .[:$i], description: .[$i + 1:]})' \
+        --args "${BOT_COMMANDS[@]}"
 }
 
 register_commands() {
@@ -254,6 +253,7 @@ handle_report() {
             log "/full attachment sent"
         else
             log "/full attachment failed"
+            tg_send_text_to "$chat_id" "⚠️ The raw output file could not be uploaded. Check the container logs." || true
         fi
     fi
 

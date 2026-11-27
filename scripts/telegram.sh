@@ -81,8 +81,9 @@ tg_send_text_to() {
 tg_send_document_to() {
     local chat_id="$1" file="$2" name="$3" caption="$4"
     name="$(printf '%s' "$name" | tr -c 'A-Za-z0-9._-' '_')"
-    # Telegram allows 1024 caption characters; cut by code point, not byte.
-    caption="$(jq -n -r --arg c "$caption" '$c[:1000]')"
+    # Telegram allows 1024 caption characters, counted in UTF-16 units, so
+    # cut at 512 code points (never more than 1024 units), not by byte.
+    caption="$(jq -n -r --arg c "$caption" '$c[:512]')"
     tg_api sendDocument 60 \
         --form-string "chat_id=${chat_id}" \
         --form-string "caption=${caption}" \

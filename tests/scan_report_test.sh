@@ -113,6 +113,13 @@ second_path="$(tg_calls -r '.[2].fields.document_path')"
 [[ "$second_path" != "$doc_path" ]] || fail "temp attachment path reused: ${second_path}"
 [[ ! -e "$second_path" ]] || fail "second attachment temp file was not deleted"
 
+# A failed upload is reported, since the report already says a file follows.
+reset_calls
+TG_FAIL_METHOD=sendDocument handle_command "$AUTH" "/full"
+assert_eq "$(tg_calls 'map(.method) | join(",")')" "sendMessage,sendMessage,sendDocument,sendMessage" "/full with a failed upload"
+assert_eq "$(tg_calls -r '.[3].fields.text')" "⚠️ The raw output file could not be uploaded. Check the container logs." "/full upload failure notice"
+[[ -z "$(ls -A "$TMPDIR")" ]] || fail "failed /full left temp files: $(ls -A "$TMPDIR")"
+
 # --- Advisory-only drives are not labelled critical -----------------------------------
 reset_calls
 printf '%s\n' /dev/sdb > "$DRIVES_FILE"

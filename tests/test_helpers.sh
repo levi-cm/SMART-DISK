@@ -111,6 +111,7 @@ record_tg_api() {
         { (( ${#pairs[@]} > 0 )) && printf '%s\037' "${pairs[@]}"; } | jq -n -c --rawfile raw /dev/stdin --arg m "$method" '
             {method: $m, fields: ($raw | split("\u001f") | map(select(length > 0) | index("=") as $i
                 | {key: .[:$i], value: .[$i + 1:]}) | from_entries)}' >> "${TG_RECORD_DIR}/calls.jsonl"
+        [[ "$method" == "${TG_FAIL_METHOD:-}" ]] && return 22
         echo '{"ok":true,"result":true}'
     }
 }

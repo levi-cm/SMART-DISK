@@ -9,15 +9,15 @@
 def width: if . > 65535 then 2 else 1 end;
 def units: reduce explode[] as $c (0; . + ($c | width));
 
-# One over-long line -> pieces of at most $limit units.
+# One over-long line -> pieces of at most $limit units. Records cut points
+# instead of growing an array per code point, which is quadratic in jq.
 def hard_split:
-  reduce explode[] as $c ({done: [], cur: [], n: 0};
-    ($c | width) as $w
-    | if .n + $w > $limit and .n > 0
-      then .done += [.cur] | .cur = [$c] | .n = $w
-      else .cur += [$c] | .n += $w
-      end)
-  | (.done + [.cur]) | map(implode);
+  explode as $cs
+  | reduce range(0; $cs | length) as $i ({cuts: [0], n: 0};
+      ($cs[$i] | width) as $w
+      | if .n + $w > $limit and .n > 0 then .cuts += [$i] | .n = $w else .n += $w end)
+  | (.cuts + [$cs | length]) as $k
+  | [range(0; ($k | length) - 1) as $j | $cs[$k[$j]:$k[$j + 1]] | implode];
 
 # [[text, units], ...] -> [text, ...], joining neighbours with $sep while
 # the result still fits.
