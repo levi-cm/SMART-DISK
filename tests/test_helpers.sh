@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # test_helpers.sh — shared helpers for tests/*_test.sh. Sourced, not run.
 # shellcheck disable=SC2034 # Variables set here are read by the sourcing test.
-# shellcheck disable=SC2317 # The tg_api recorder is called by the code under test.
+# shellcheck disable=SC2317,SC2329 # The tg_api recorder is called by the code under test.
 
 ROOT_DIR="${ROOT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 REPORT_FIXTURES="${ROOT_DIR}/tests/fixtures/reports"

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Heartbeat: an explicit "off" must hold (jq's // treated false as missing),
 # and no heartbeat may be sent when no drives are configured.
-# shellcheck disable=SC2317 # tg_send/log stubs are called by the sourced entrypoint.
+# shellcheck disable=SC2317,SC2329 # tg_send/log stubs are called by the sourced entrypoint.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
