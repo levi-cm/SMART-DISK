@@ -1,0 +1,31 @@
+🔴 SMART scan · lab_host*[1]
+Worst: CRITICAL · 4 drives
+🟢 1 good · 🟡 1 advisory · 🟠 1 degraded · 🔴 1 critical
+🕒 2026-01-01 00:00 UTC
+
+🟢 /dev/disk/by-id/ata-Fixture_HDD_[A]*1 — GOOD
+   Fixture HDD 4000 · 4 TB
+   🌡 34 °C · ⏱ 12,345 h (1.4 y)
+
+🟡 /dev/sdb — ADVISORY
+   Fixture SSD 870 · 1 TB
+   🌡 31 °C · ⏱ 20,500 h (2.3 y)
+   • smart_error_log_count=2
+   • UDMA_CRC_Error_Count(199)=3
+
+🟠 /dev/nvme0n1 — DEGRADED
+   Fixture NVMe 2TB · 2 TB
+   🌡 41 °C · ⏱ 8,760 h (1 y)
+   Wear  ▰▰▰▰▰▰▰▰▰▰ 117% used · past rated endurance
+   Spare ▰▰▰▰▰▰▰▰▰▰ 100% (min 10%)
+   • nvme_percentage_used=117>=80
+
+🔴 /dev/sdc — CRITICAL
+   Fixture HDD 2000 · 2 TB
+   🌡 38 °C · ⏱ 43,800 h (5 y)
+   • Offline_Uncorrectable(198)=1
+   • Current_Pending_Sector(197)=2
+   • Reported_Uncorrect(187)=4
+   • +2 more, see /full
+
+Send /full for raw smartctl output.

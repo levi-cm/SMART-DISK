@@ -1,0 +1,66 @@
+{
+  "json_format_version": [
+    1,
+    0
+  ],
+  "smartctl": {
+    "version": [
+      7,
+      4
+    ],
+    "exit_status": 0,
+    "output": [
+      "smartctl 7.4 2023-08-01 r5530 [x86_64-linux] (local build)",
+      "",
+      "=== START OF INFORMATION SECTION ===",
+      "Model Number:                       Fixture NVMe 2TB",
+      "Serial Number:                      FIXTURE-NVME-0003",
+      "Total NVM Capacity:                 2,000,398,934,016 bytes",
+      "",
+      "=== START OF SMART DATA SECTION ===",
+      "SMART overall-health self-assessment test result: PASSED",
+      "",
+      "SMART/Health Information (NVMe Log 0x02)",
+      "Critical Warning:                   0",
+      "Temperature:                        41",
+      "Available Spare:                    100",
+      "Available Spare Threshold:          10",
+      "Percentage Used:                    117",
+      "Media Errors:                       0",
+      "Num Err Log Entries:                0",
+      "Power On Hours:                     8760",
+      ""
+    ]
+  },
+  "device": {
+    "name": "/dev/fixture",
+    "type": "nvme",
+    "protocol": "NVMe"
+  },
+  "model_name": "Fixture NVMe 2TB",
+  "serial_number": "FIXTURE-NVME-0003",
+  "smart_status": {
+    "passed": true
+  },
+  "nvme_smart_health_information_log": {
+    "critical_warning": 0,
+    "temperature": 41,
+    "available_spare": 100,
+    "available_spare_threshold": 10,
+    "percentage_used": 117,
+    "media_errors": 0,
+    "num_err_log_entries": 0,
+    "power_on_hours": 8760
+  },
+  "nvme_total_capacity": 2000398934016,
+  "user_capacity": {
+    "blocks": 3907029168,
+    "bytes": 2000398934016
+  },
+  "temperature": {
+    "current": 41
+  },
+  "power_on_time": {
+    "hours": 8760
+  }
+}

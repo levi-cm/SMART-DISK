@@ -1,6 +1,6 @@
 # SMART Watcher
 
-Dockerized SMART disk monitoring with Telegram alerts. The container runs scheduled `smartctl` checks, sends configurable burst alerts, supports `/scan` and `/heartbeat` Telegram commands, and stores runtime state in `state/`.
+Dockerized SMART disk monitoring with Telegram alerts. The container runs scheduled `smartctl` checks, sends configurable burst alerts, answers `/scan`, `/full` and `/heartbeat` Telegram commands with visual reports, and stores runtime state in `state/`.
 
 ## What It Monitors
 
@@ -21,7 +21,7 @@ Findings carry severity instead of being described as certain drive failure:
 - `config/users.conf`: private/local allowlist of Telegram chat IDs.
 - `.env`: private/local Telegram token and host label.
 - `state/`: private/local runtime state.
-- `tests/`: parser and open-source readiness checks.
+- `tests/`: fixture-based tests for parsing, alerts, reports and config, an offline container smoke test, and open-source readiness checks.
 
 ## Quick Start
 
@@ -43,7 +43,7 @@ BURST_COUNT=10
 BURST_DELAY=30
 ```
 
-Edit `config/users.conf` and put one authorized Telegram chat ID per line. Only these chats can use `/scan`, `/heartbeat`, and `/help`.
+Edit `config/users.conf` and put one authorized Telegram chat ID per line. Only these chats can use `/scan`, `/full`, `/heartbeat`, and `/help`.
 
 List disks on the host:
 
@@ -113,11 +113,44 @@ Stable `/dev/disk/by-id/...` paths are better than `/dev/sdX` when your host sup
 
 ## Telegram Commands
 
-- `/scan`: run a scan now and return full SMART output.
+- `/scan`: run a scan now. You get one acknowledgement, then one compact report.
+- `/full`: the same report, plus a Markdown file with the evidence and the raw `smartctl -a` text for every drive.
 - `/heartbeat`: enable, disable, or check the healthy heartbeat message.
 - `/help`: show command help.
 
-Unknown chat IDs are rejected.
+The watcher registers these commands with Telegram (`setMyCommands`) on start, so they appear in the chat's command menu. The menu and `/help` are built from the same list in `scripts/bot_poller.sh`. Unknown chat IDs are rejected.
+
+Reports are plain Unicode text (no parse mode), so drive paths and host labels show exactly as configured. The report starts with an overview: the worst severity and the number of drives in each state. Then each drive gets a card with its verdict, temperature, power-on hours and, for NVMe, gauges for wear (percentage used) and available spare. A value the drive does not report shows as `—`, not 0. Wear above 100% means the drive is past its rated endurance:
+
+```text
+🔴 SMART scan · my-server
+Worst: CRITICAL · 3 drives
+🟢 1 good · 🟠 1 degraded · 🔴 1 critical
+🕒 2026-01-01 00:00 UTC
+
+🟢 /dev/sda — GOOD
+   Fixture HDD 4000 · 4 TB
+   🌡 34 °C · ⏱ 12,345 h (1.4 y)
+
+🟠 /dev/nvme0n1 — DEGRADED
+   Fixture NVMe 2TB · 2 TB
+   🌡 41 °C · ⏱ 8,760 h (1 y)
+   Wear  ▰▰▰▰▰▰▰▰▰▰ 117% used · past rated endurance
+   Spare ▰▰▰▰▰▰▰▰▰▰ 100% (min 10%)
+   • nvme_percentage_used=117>=80
+
+🔴 /dev/sdc — CRITICAL
+   Fixture HDD 2000 · 2 TB
+   🌡 38 °C · ⏱ 43,800 h (5 y)
+   • Offline_Uncorrectable(198)=1
+   • Current_Pending_Sector(197)=2
+   • Reported_Uncorrect(187)=4
+   • +2 more, see /full
+
+Send /full for raw smartctl output.
+```
+
+Each report reads every drive once, with `smartctl -a --json=o`, which returns the JSON and the original text together. The verdict, the card and the attached raw output therefore come from the same read. `/full` writes its attachment into a fresh temporary directory and deletes it after sending. Long reports are split at card boundaries to stay under Telegram's 4096-character limit.
 
 ## Configuration
 
@@ -133,6 +166,9 @@ These environment values can be set in `.env` or `docker-compose.yml`:
 - `HEARTBEAT_EVERY`: send healthy heartbeat every N scans, default `4`; set `0` to disable scheduled heartbeats.
 - `TEMP_LIMIT`: maximum accepted drive temperature in Celsius, default `50`.
 - `SSD_LIFE_MIN`: minimum accepted ATA SSD life attribute value, default `90`.
+- `TELEGRAM_API_BASE`: Bot API base URL, default `https://api.telegram.org`. Set it for a self-hosted Bot API server; the offline smoke test uses it to reach its mock. Every request carries the bot token, so only point it at a server you control.
+- `SMARTCTL_TIMEOUT`: seconds a `/scan` or `/full` read of one drive may take before it is reported critical (`smartctl_timeout`), default `120`.
+- `TG_CHUNK_LIMIT`: maximum characters (UTF-16 code units) per report message, default `3800`, capped at Telegram's `4096`.
 
 `paranoid` remains the explicit default and bursts on every new or changed non-OK finding. `balanced` sends a single alert for advisory/degraded transitions and still bursts on critical findings. Both policies retain reminders, suppress unchanged alerts inside `REMINDER_INTERVAL`, send recovery messages, and withhold healthy heartbeats whenever any drive is non-OK. Set `BURST_COUNT=10` and `BURST_DELAY=30` for the original burst behavior; other positive values remain supported.
 
@@ -155,19 +191,19 @@ Do not upload a zip of the raw working directory unless you manually remove `.en
 
 ## Development
 
-Run checks:
+Run checks (the same gates as CI):
 
 ```bash
-bash tests/smart_check_test.sh
-bash tests/alert_state_test.sh
-bash tests/message_accuracy_test.sh
-bash tests/scan_report_test.sh
-bash tests/open_source_readiness_test.sh
-shellcheck scripts/*.sh tests/*.sh
-bash -n scripts/*.sh tests/*.sh
+for t in tests/*_test.sh; do bash "$t" || break; done
+shellcheck scripts/*.sh tests/*.sh tests/smoke/*.sh
+for f in scripts/*.sh tests/*.sh tests/smoke/*.sh; do bash -n "$f"; done
 docker compose config --quiet
 docker compose build
 ```
+
+Run `bash -n` once per file: `bash -n a.sh b.sh` checks only `a.sh` and passes `b.sh` to it as an argument.
+
+`tests/container_smoke_test.sh` needs Docker but no network, token, chat or disk. It builds the image and runs it with `--network none` and the compose hardening flags. A mock Bot API (busybox `nc`, already in the image) listens on the container's loopback, `TELEGRAM_API_BASE` points at it, and a fake `smartctl` serves fixture drives. The test then checks the messages and the `/full` upload the mock received. Set `SMOKE_ARTIFACTS=<dir>` to keep the captured requests and the container log.
 
 Because scripts are copied into the image, rebuild after editing files under `scripts/`:
 

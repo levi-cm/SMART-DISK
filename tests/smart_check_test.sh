@@ -51,6 +51,9 @@ assert_case balanced nvme_historical_counters.json "WARN /dev/test severity=advi
 assert_case paranoid ata_pending_sectors.json "FAIL /dev/test severity=critical|Current_Pending_Sector(197)=2"
 assert_case balanced ata_pending_sectors.json "FAIL /dev/test severity=critical|Current_Pending_Sector(197)=2"
 assert_case balanced ata_self_test_failure.json "FAIL /dev/test severity=critical|self_test_failures=1"
+# Failed self-test flagged only by status.passed=false, with no failure text.
+assert_case paranoid ata_self_test_failed_flag_only.json "FAIL /dev/test severity=critical|self_test_failures=1"
+assert_case balanced ata_self_test_failed_flag_only.json "FAIL /dev/test severity=critical|self_test_failures=1"
 assert_case balanced ata_temperature.json "FAIL /dev/test severity=degraded|temp=51C>50C"
 assert_case balanced nvme_wear.json "FAIL /dev/test severity=degraded|nvme_percentage_used=85>=80"
 assert_case balanced malformed.json "FAIL /dev/test severity=critical|jq_parse_failed"
@@ -123,5 +126,29 @@ fixture "${tmpdir}/unknown-vendor-attr.json" <<'JSON'
 JSON
 out="$(run_case "${tmpdir}/unknown-vendor-attr.json")"
 [[ "$out" == "OK /dev/test" ]] || fail "expected unknown vendor attr ignored, got: $out"
+
+# Snapshot mode: evaluates a saved snapshot and never reads the drive again.
+cat > "${tmpdir}/smartctl-must-not-run" <<'SH'
+#!/usr/bin/env bash
+echo "smartctl called" >> "${SMARTCTL_CALLS:?}"
+SH
+chmod +x "${tmpdir}/smartctl-must-not-run"
+out="$(SMARTCTL_BIN="${tmpdir}/smartctl-must-not-run" SMARTCTL_CALLS="${tmpdir}/calls" \
+    bash "${ROOT_DIR}/scripts/smart_check.sh" /dev/test "${FIXTURES}/ata_pending_sectors.json")"
+[[ "$out" == "FAIL /dev/test severity=critical|Current_Pending_Sector(197)=2" ]] || fail "snapshot verdict, got: $out"
+[[ ! -e "${tmpdir}/calls" ]] || fail "smart_check.sh read the drive despite a snapshot"
+out="$(bash "${ROOT_DIR}/scripts/smart_check.sh" /dev/test "${tmpdir}/missing-snapshot.json")"
+[[ "$out" == "FAIL /dev/test severity=critical|smartctl_no_output" ]] || fail "missing snapshot, got: $out"
+
+# ATA attribute 194 packs min/max above the low byte. Without
+# temperature.current, the verdict uses the low byte, as the report card does.
+jq 'del(.temperature) | (.ata_smart_attributes.table[] | select(.id == 194) | .raw.value) = 47245361178' \
+    "${ROOT_DIR}/tests/fixtures/reports/ata_healthy.json" > "${tmpdir}/packed-temp.json"
+out="$(run_case "${tmpdir}/packed-temp.json")"
+[[ "$out" == "OK /dev/test" ]] || fail "packed ATA temperature (26 C) flagged, got: $out"
+jq 'del(.temperature) | (.ata_smart_attributes.table[] | select(.id == 194) | .raw.value) = 47245361207' \
+    "${ROOT_DIR}/tests/fixtures/reports/ata_healthy.json" > "${tmpdir}/packed-hot.json"
+out="$(run_case "${tmpdir}/packed-hot.json")"
+[[ "$out" == "FAIL /dev/test severity=degraded|temp=55C>50C" ]] || fail "packed ATA temperature (55 C), got: $out"
 
 echo "smart_check_test: ok"

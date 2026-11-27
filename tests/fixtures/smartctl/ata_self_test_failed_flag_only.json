@@ -1,0 +1,15 @@
+{
+  "smartctl": {"exit_status": 0},
+  "smart_status": {"passed": true},
+  "temperature": {"current": 33},
+  "ata_smart_attributes": {"table": []},
+  "ata_smart_error_log": {"summary": {"count": 0}},
+  "ata_smart_self_test_log": {
+    "standard": {
+      "table": [
+        {"type": {"value": 1, "string": "Short offline"}, "status": {"passed": false}, "lifetime_hours": 100},
+        {"type": {"value": 1, "string": "Short offline"}, "status": {"value": 0, "string": "Completed without error", "passed": true}, "lifetime_hours": 90}
+      ]
+    }
+  }
+}

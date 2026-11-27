@@ -1,0 +1,85 @@
+{
+  "json_format_version": [
+    1,
+    0
+  ],
+  "smartctl": {
+    "version": [
+      7,
+      4
+    ],
+    "exit_status": 0,
+    "output": [
+      "smartctl 7.4 2023-08-01 r5530 [x86_64-linux] (local build)",
+      "Copyright (C) 2002-23, Bruce Allen, Christian Franke, www.smartmontools.org",
+      "",
+      "=== START OF INFORMATION SECTION ===",
+      "Device Model:     Fixture HDD 4000",
+      "Serial Number:    FIXTURE-HDD-0001",
+      "User Capacity:    4,000,787,030,016 bytes",
+      "SMART support is: Enabled",
+      "",
+      "=== START OF READ SMART DATA SECTION ===",
+      "SMART overall-health self-assessment test result: PASSED",
+      "",
+      "ID# ATTRIBUTE_NAME          FLAG     VALUE WORST THRESH TYPE      UPDATED  WHEN_FAILED RAW_VALUE",
+      "  9 Power_On_Hours          0x0032   100   100   000    Old_age   Always       -       12345",
+      "194 Temperature_Celsius     0x0032   100   100   000    Old_age   Always       -       34",
+      ""
+    ]
+  },
+  "device": {
+    "name": "/dev/fixture",
+    "type": "sat",
+    "protocol": "ATA"
+  },
+  "model_name": "Fixture HDD 4000",
+  "serial_number": "FIXTURE-HDD-0001",
+  "user_capacity": {
+    "blocks": 7814037168,
+    "bytes": 4000787030016
+  },
+  "smart_status": {
+    "passed": true
+  },
+  "ata_smart_attributes": {
+    "table": [
+      {
+        "id": 9,
+        "name": "Power_On_Hours",
+        "value": 100,
+        "worst": 100,
+        "thresh": 0,
+        "raw": {
+          "value": 12345
+        }
+      },
+      {
+        "id": 194,
+        "name": "Temperature_Celsius",
+        "value": 100,
+        "worst": 100,
+        "thresh": 0,
+        "raw": {
+          "value": 34
+        }
+      }
+    ]
+  },
+  "ata_smart_error_log": {
+    "summary": {
+      "count": 0
+    }
+  },
+  "ata_smart_self_test_log": {
+    "standard": {
+      "table": []
+    }
+  },
+  "temperature": {
+    "current": 34
+  },
+  "power_on_time": {
+    "hours": 12345
+  }
+}

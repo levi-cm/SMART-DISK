@@ -28,11 +28,6 @@ log() {
     echo "[$(date -Iseconds)] $*"
 }
 
-# Load drives (skip blanks/comments).
-load_drives() {
-    grep -vE '^\s*(#|$)' "$DRIVES_FILE" | tr -d '\r' | awk 'NF'
-}
-
 # state_get <drive> <field>
 state_get() {
     state_read '.[$d][$f] // empty' --arg d "$1" --arg f "$2"
@@ -165,7 +160,7 @@ recovery_alert() {
     local drive="$1"
     local text
     text=$(cat <<EOF
-✅ *DRIVE RECOVERED* — ${drive}
+✅ *DRIVE RECOVERED* — \`${drive}\`
 HOST: \`${HOST_NAME}\`
 TIME: \`$(date -Iseconds)\`
 
@@ -249,13 +244,15 @@ scan_once() {
     scan_count=$((scan_count + 1))
     meta_set scan_count "$scan_count"
 
+    local n_drives="${#drives_arr[@]}"
     if (( HEARTBEAT_EVERY > 0 )) && (( scan_count % HEARTBEAT_EVERY == 0 )); then
         local hb_enabled
-        hb_enabled="$(state_read '._meta.heartbeat_enabled // true')"
+        hb_enabled="$(state_heartbeat_enabled)"
         if [[ "$hb_enabled" == "false" ]]; then
             log "HEARTBEAT: scan #${scan_count} — disabled by user toggle, skipping"
+        elif (( n_drives == 0 )); then
+            log "HEARTBEAT: scan #${scan_count} — skipped (no drives configured)"
         elif (( all_ok == 1 )); then
-            local n_drives="${#drives_arr[@]}"
             log "HEARTBEAT: scan #${scan_count} — sending awesome msg"
             heartbeat_alert "$n_drives" "$scan_count" "${drives_arr[@]}"
         else
@@ -274,9 +271,13 @@ main() {
 
     state_init
 
-    local n_drives
+    local n_drives no_drives_note=""
     n_drives=$(load_drives | wc -l)
     log "monitoring ${n_drives} drives"
+    if (( n_drives == 0 )); then
+        log "WARNING: no drives configured in ${DRIVES_FILE}; nothing will be checked"
+        no_drives_note=$'\n⚠️ No drives configured in drives.conf, so nothing will be checked.'
+    fi
 
     # Launch bot poller in background. It handles /scan etc.
     "${SCRIPTS_DIR}/bot_poller.sh" &
@@ -285,7 +286,7 @@ main() {
 
     trap 'log "shutting down"; kill ${BOT_PID} 2>/dev/null; for _ in 1 2 3 4 5; do kill -0 ${BOT_PID} 2>/dev/null || break; sleep 1; done; kill -9 ${BOT_PID} 2>/dev/null; exit 0' SIGTERM SIGINT
 
-    tg_send "👁️ *SMART watcher online* on \`${HOST_NAME}\` — monitoring ${n_drives} drives every $((SCAN_INTERVAL/3600))h. Send /scan for on-demand report."
+    tg_send "👁️ *SMART watcher online* on \`${HOST_NAME}\` — monitoring ${n_drives} drives every $((SCAN_INTERVAL/3600))h. Send /scan for a quick report or /full for raw output.${no_drives_note}"
 
     while true; do
         scan_once || log "scan_once returned non-zero (continuing)"

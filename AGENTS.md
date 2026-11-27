@@ -2,7 +2,7 @@
 
 ## Project Structure & Module Organization
 
-This repository contains a Dockerized SMART disk watcher for Telegram alerts. The service is defined in `docker-compose.yml` and built from `Dockerfile`. Runtime logic lives in `scripts/`: `entrypoint.sh` runs scheduled scans, `bot_poller.sh` handles Telegram commands, `smart_check.sh` evaluates SMART health, `smart_result_lib.sh` parses severity results and state transitions, `telegram.sh` sends messages, `state_lib.sh` manages locked JSON state, and `parse_updates.jq` parses Telegram updates. Static inputs are in `config/`: `drives.conf` lists devices such as `/dev/sda`, and local-only `users.conf` lists authorized Telegram chat IDs. Public-safe examples live next to the private files as `*.example`. Persistent runtime data is under ignored `state/`. `.env` stores secrets and is ignored.
+This repository contains a Dockerized SMART disk watcher for Telegram alerts. The service is defined in `docker-compose.yml` and built from `Dockerfile`. Runtime logic lives in `scripts/`: `entrypoint.sh` runs scheduled scans, `bot_poller.sh` handles Telegram commands (its `BOT_COMMANDS` list drives both `/help` and `setMyCommands`), `smart_check.sh` evaluates SMART health (live or from a saved snapshot), `smart_result_lib.sh` parses severity results and state transitions, `report_lib.sh` with `report_record.jq` and `report_render.jq` builds the `/scan` and `/full` reports from one `smartctl -a --json=o` snapshot per drive, `telegram.sh` sends messages (`tg_split.jq` splits long text), `config_lib.sh` parses the line-based config files, `state_lib.sh` manages locked JSON state, and `parse_updates.jq` parses Telegram updates. Static inputs are in `config/`: `drives.conf` lists devices such as `/dev/sda`, and local-only `users.conf` lists authorized Telegram chat IDs. Public-safe examples live next to the private files as `*.example`. Persistent runtime data is under ignored `state/`. `.env` stores secrets and is ignored.
 
 ## Build, Test, and Development Commands
 
@@ -13,6 +13,7 @@ This repository contains a Dockerized SMART disk watcher for Telegram alerts. Th
 - `docker compose logs -f smart-watcher`: follow watcher, scan, and Telegram polling logs.
 - `docker compose exec smart-watcher /scripts/smart_check.sh /dev/sda`: run one SMART check inside the container.
 - `bash tests/open_source_readiness_test.sh`: verify publish-safety guardrails such as ignored secrets, examples, docs, and image packaging.
+- `bash tests/container_smoke_test.sh`: build the image and run it offline (`--network none`) against a loopback mock Bot API and fixture drives.
 
 ## Coding Style & Naming Conventions
 
@@ -20,7 +21,7 @@ Scripts are Bash-first and use small functions with `snake_case` names. Keep var
 
 ## Testing Guidelines
 
-Run all `tests/*_test.sh` checks for SMART fixtures, alert transitions, message accuracy, scan reports, and publish safety. Also run ShellCheck, `bash -n`, jq fixture validation, and `docker compose config --quiet`; CI enforces the same gates. For runtime changes, rebuild when Dockerfile or `scripts/` change, restart with `docker compose up -d --build`, and check `docker compose ps` plus recent logs. The healthcheck validates entrypoint liveness and writable `/state` locking, so investigate unhealthy status before trusting scheduled alerts. For live SMART logic, test each configured drive with `/scripts/smart_check.sh`. For Telegram changes, verify `/help`, `/scan`, and `/heartbeat` from an authorized chat when credentials are available.
+Run all `tests/*_test.sh` checks for SMART fixtures, alert transitions, message accuracy, report rendering, message splitting, config parsing, heartbeat, the offline container smoke test, and publish safety. Also run ShellCheck, `bash -n` once per file, jq fixture validation, and `docker compose config --quiet`; CI enforces the same gates. Report output is plain text: update `tests/fixtures/reports/expected_scan_mixed.txt` (`UPDATE_GOLDEN=1 bash tests/report_render_test.sh`) only for intended layout changes. For runtime changes, rebuild when Dockerfile or `scripts/` change, restart with `docker compose up -d --build`, and check `docker compose ps` plus recent logs. The healthcheck validates entrypoint liveness and writable `/state` locking, so investigate unhealthy status before trusting scheduled alerts. For live SMART logic, test each configured drive with `/scripts/smart_check.sh`. For Telegram changes, verify `/help`, `/scan`, `/full`, and `/heartbeat` from an authorized chat when credentials are available.
 
 ## Commit & Pull Request Guidelines
 
