@@ -161,7 +161,11 @@ cat > "${tmpdir}/hung-smartctl" <<'SH'
 exec sleep 30
 SH
 chmod +x "${tmpdir}/hung-smartctl"
+# Shorten the KILL grace to 0.2 s for these reads; exit codes are unchanged.
+# shellcheck disable=SC2317,SC2329 # called by report_collect
+timeout() { [[ "$1" == -k ]] && set -- -k 0.2 "${@:3}"; command timeout "$@"; }
 hung_records="$(SMARTCTL_BIN="${tmpdir}/hung-smartctl" SMARTCTL_TIMEOUT=1 collect /dev/sdx /dev/sdy 2>/dev/null)"
+unset -f timeout
 hung="$(report_render scan "$hung_records" "$GENERATED")"
 for drive in /dev/sdx /dev/sdy; do
     card="$(card_of "$hung" "$drive")"
