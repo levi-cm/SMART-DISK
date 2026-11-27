@@ -10,7 +10,7 @@ permissions:
 jobs:
   verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
 
@@ -21,18 +21,22 @@ jobs:
 
       - name: Static checks
         run: |
-          shellcheck scripts/*.sh tests/*.sh
-          bash -n scripts/*.sh tests/*.sh
+          shellcheck scripts/*.sh tests/*.sh tests/smoke/*.sh
+          # One file per bash -n: given several, it checks only the first.
+          for f in scripts/*.sh tests/*.sh tests/smoke/*.sh; do bash -n "$f" || exit 1; done
           find tests/fixtures -type f -name '*.json' ! -name malformed.json -print0 | xargs -0 -n1 jq -e . >/dev/null
           jq -n -f scripts/parse_updates.jq >/dev/null
 
       - name: Tests
         run: |
-          bash tests/smart_check_test.sh
-          bash tests/alert_state_test.sh
-          bash tests/message_accuracy_test.sh
-          bash tests/scan_report_test.sh
-          bash tests/open_source_readiness_test.sh
+          for t in tests/*_test.sh; do
+            [[ "$t" == tests/container_smoke_test.sh ]] && continue
+            echo "== $t"
+            bash "$t"
+          done
+
+      - name: Container smoke test (offline)
+        run: bash tests/container_smoke_test.sh
 
       - name: Compose render
         run: |

@@ -1,0 +1,66 @@
+{
+  "json_format_version": [
+    1,
+    0
+  ],
+  "smartctl": {
+    "version": [
+      7,
+      4
+    ],
+    "exit_status": 0,
+    "output": [
+      "smartctl 7.4 2023-08-01 r5530 [x86_64-linux] (local build)",
+      "",
+      "=== START OF INFORMATION SECTION ===",
+      "Model Number:                       Fixture NVMe Zero",
+      "Serial Number:                      FIXTURE-NVME-0005",
+      "Total NVM Capacity:                 256,060,514,304 bytes",
+      "",
+      "=== START OF SMART DATA SECTION ===",
+      "SMART overall-health self-assessment test result: PASSED",
+      "",
+      "SMART/Health Information (NVMe Log 0x02)",
+      "Critical Warning:                   0",
+      "Temperature:                        0",
+      "Available Spare:                    0",
+      "Available Spare Threshold:          0",
+      "Percentage Used:                    0",
+      "Media Errors:                       0",
+      "Num Err Log Entries:                0",
+      "Power On Hours:                     0",
+      ""
+    ]
+  },
+  "device": {
+    "name": "/dev/fixture",
+    "type": "nvme",
+    "protocol": "NVMe"
+  },
+  "model_name": "Fixture NVMe Zero",
+  "serial_number": "FIXTURE-NVME-0005",
+  "smart_status": {
+    "passed": true
+  },
+  "nvme_smart_health_information_log": {
+    "critical_warning": 0,
+    "temperature": 0,
+    "available_spare": 0,
+    "available_spare_threshold": 0,
+    "percentage_used": 0,
+    "media_errors": 0,
+    "num_err_log_entries": 0,
+    "power_on_hours": 0
+  },
+  "nvme_total_capacity": 256060514304,
+  "user_capacity": {
+    "blocks": 500118192,
+    "bytes": 256060514304
+  },
+  "temperature": {
+    "current": 0
+  },
+  "power_on_time": {
+    "hours": 0
+  }
+}

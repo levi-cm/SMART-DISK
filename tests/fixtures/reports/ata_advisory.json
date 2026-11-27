@@ -1,0 +1,74 @@
+{
+  "json_format_version": [
+    1,
+    0
+  ],
+  "smartctl": {
+    "version": [
+      7,
+      4
+    ],
+    "exit_status": 0,
+    "output": [
+      "smartctl 7.4 2023-08-01 r5530 [x86_64-linux] (local build)",
+      "Copyright (C) 2002-23, Bruce Allen, Christian Franke, www.smartmontools.org",
+      "",
+      "=== START OF INFORMATION SECTION ===",
+      "Device Model:     Fixture SSD 870",
+      "Serial Number:    FIXTURE-SSD-0002",
+      "User Capacity:    1,000,204,886,016 bytes",
+      "SMART support is: Enabled",
+      "",
+      "=== START OF READ SMART DATA SECTION ===",
+      "SMART overall-health self-assessment test result: PASSED",
+      "",
+      "ID# ATTRIBUTE_NAME          FLAG     VALUE WORST THRESH TYPE      UPDATED  WHEN_FAILED RAW_VALUE",
+      "199 UDMA_CRC_Error_Count    0x0032   200   200   000    Old_age   Always       -       3",
+      ""
+    ]
+  },
+  "device": {
+    "name": "/dev/fixture",
+    "type": "sat",
+    "protocol": "ATA"
+  },
+  "model_name": "Fixture SSD 870",
+  "serial_number": "FIXTURE-SSD-0002",
+  "user_capacity": {
+    "blocks": 1953525168,
+    "bytes": 1000204886016
+  },
+  "smart_status": {
+    "passed": true
+  },
+  "ata_smart_attributes": {
+    "table": [
+      {
+        "id": 199,
+        "name": "UDMA_CRC_Error_Count",
+        "value": 200,
+        "worst": 200,
+        "thresh": 0,
+        "raw": {
+          "value": 3
+        }
+      }
+    ]
+  },
+  "ata_smart_error_log": {
+    "summary": {
+      "count": 2
+    }
+  },
+  "ata_smart_self_test_log": {
+    "standard": {
+      "table": []
+    }
+  },
+  "temperature": {
+    "current": 31
+  },
+  "power_on_time": {
+    "hours": 20500
+  }
+}

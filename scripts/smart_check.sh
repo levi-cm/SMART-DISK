@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
-# smart_check.sh <drive>
+# smart_check.sh <drive> [snapshot.json]
 # Prints: "OK <drive>" or "WARN|FAIL <drive> severity=<level>|<reason>"
 # Exits 0 always (parent reads stdout).
+# With a snapshot (saved `smartctl -a --json` output) the drive is not read
+# again, so a report's verdict and its raw output come from the same read.
 
 set -u
 
 DRIVE="${1:-}"
+SNAPSHOT="${2:-}"
 SMARTCTL_BIN="${SMARTCTL_BIN:-smartctl}"
 TEMP_LIMIT="${TEMP_LIMIT:-50}"
 SSD_LIFE_MIN="${SSD_LIFE_MIN:-90}"
@@ -50,7 +53,11 @@ fi
 # 199 UDMA_CRC_Error_Count
 # 200 Multi_Zone_Error_Rate
 
-JSON="$("$SMARTCTL_BIN" -a -j "$DRIVE" 2>/dev/null || true)"
+if [[ -n "$SNAPSHOT" ]]; then
+    JSON="$(cat -- "$SNAPSHOT" 2>/dev/null || true)"
+else
+    JSON="$("$SMARTCTL_BIN" -a -j "$DRIVE" 2>/dev/null || true)"
+fi
 
 if [[ -z "$JSON" ]]; then
     emit_finding critical "smartctl_no_output"
@@ -104,7 +111,7 @@ DATA="$(jq -r '
         | join("|")),
       (.ata_smart_error_log.summary.count // 0 | tostring),
       ((.ata_smart_self_test_log.standard.table // [])
-        | map(select((.status.passed // true) == false or (((.status.string // "Completed without error") | test("Completed without error"; "i")) | not)))
+        | map(select(.status.passed == false or (((.status.string // "Completed without error") | test("Completed without error"; "i")) | not)))
         | length | tostring),
       (.nvme_smart_health_information_log.critical_warning // "" | tostring),
       (.nvme_smart_health_information_log.media_errors // "" | tostring),
@@ -190,6 +197,7 @@ if [[ -n "$TEMP" && "$TEMP" =~ ^[0-9]+$ ]] && (( TEMP > TEMP_LIMIT )); then
     DEGRADED_REASONS+=("temp=${TEMP}C>${TEMP_LIMIT}C")
 fi
 
+# Keep this order: report_record.jq reverses it to list critical evidence first.
 ALL_REASONS=("${ADVISORY_REASONS[@]}" "${DEGRADED_REASONS[@]}" "${CRITICAL_REASONS[@]}")
 if (( ${#ALL_REASONS[@]} > 0 )); then
     severity="advisory"

@@ -12,6 +12,8 @@ source "${SCRIPTS_DIR}/telegram.sh"
 source "${SCRIPTS_DIR}/state_lib.sh"
 # shellcheck source=/dev/null
 source "${SCRIPTS_DIR}/smart_result_lib.sh"
+# shellcheck source=/dev/null
+source "${SCRIPTS_DIR}/report_lib.sh"
 
 DRIVES_FILE="${DRIVES_FILE:-/config/drives.conf}"
 USERS_FILE="${USERS_FILE:-/config/users.conf}"
@@ -21,20 +23,27 @@ SMART_POLICY="${SMART_POLICY:-paranoid}"
 HOST_NAME="${HOST_NAME:-$(hostname)}"
 SCAN_INTERVAL="${SCAN_INTERVAL:-21600}"
 HEARTBEAT_EVERY="${HEARTBEAT_EVERY:-4}"
-TG_API="https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}"
 POLL_TIMEOUT="${POLL_TIMEOUT:-25}"
-TG_CHUNK_LIMIT="${TG_CHUNK_LIMIT:-3800}"
+
+# The only list of bot commands: "name|description". /help and the Telegram
+# command menu (setMyCommands) are both generated from it.
+BOT_COMMANDS=(
+    "scan|Quick visual SMART report for every drive"
+    "full|Visual report plus raw smartctl output as a file"
+    "heartbeat|Turn the healthy heartbeat message on or off"
+    "help|Show the available commands"
+)
 
 log() {
     echo "[bot] [$(date -Iseconds)] $*"
 }
 
 is_authorized() {
-    grep -vE '^\s*(#|$)' "$USERS_FILE" 2>/dev/null | tr -d '\r' | awk 'NF' | grep -qx -- "$1"
-}
-
-load_drives() {
-    grep -vE '^\s*(#|$)' "$DRIVES_FILE" | tr -d '\r' | awk 'NF'
+    local id
+    while IFS= read -r id; do
+        [[ "$id" == "$1" ]] && return 0
+    done < <(tg_chat_ids)
+    return 1
 }
 
 get_last_update_id() {
@@ -49,9 +58,7 @@ set_last_update_id() {
 }
 
 heartbeat_enabled() {
-    local v
-    v="$(state_read '._meta.heartbeat_enabled // true')"
-    [[ "$v" == "false" ]] && echo "false" || echo "true"
+    state_heartbeat_enabled
 }
 
 set_heartbeat_enabled() {
@@ -63,24 +70,11 @@ set_heartbeat_enabled() {
     fi
 }
 
-# ===== Telegram helpers =====
-# All curl invocations share keepalive/http2 flags for TLS reuse.
-CURL_BASE=(-fsS --compressed --http2 --connect-timeout 5)
-
-tg_send_to() {
-    local chat_id="$1" text="$2"
-    curl "${CURL_BASE[@]}" -m 20 -X POST "${TG_API}/sendMessage" \
-        --data-urlencode "chat_id=${chat_id}" \
-        --data-urlencode "text=${text}" \
-        --data-urlencode "parse_mode=Markdown" \
-        --data-urlencode "disable_web_page_preview=true" \
-        >/dev/null 2>&1 \
-        || log "tg_send_to failed"
-}
+# ===== Telegram helpers (Markdown UI for the heartbeat keyboard) =====
 
 tg_send_with_keyboard() {
     local chat_id="$1" text="$2" keyboard="$3"
-    curl "${CURL_BASE[@]}" -m 20 -X POST "${TG_API}/sendMessage" \
+    tg_api sendMessage 20 \
         --data-urlencode "chat_id=${chat_id}" \
         --data-urlencode "text=${text}" \
         --data-urlencode "parse_mode=Markdown" \
@@ -92,7 +86,7 @@ tg_send_with_keyboard() {
 
 tg_edit_message() {
     local chat_id="$1" message_id="$2" text="$3" keyboard="$4"
-    curl "${CURL_BASE[@]}" -m 20 -X POST "${TG_API}/editMessageText" \
+    tg_api editMessageText 20 \
         --data-urlencode "chat_id=${chat_id}" \
         --data-urlencode "message_id=${message_id}" \
         --data-urlencode "text=${text}" \
@@ -105,7 +99,7 @@ tg_edit_message() {
 
 tg_answer_callback() {
     local cb_id="$1" alert_text="$2" show_alert="${3:-false}"
-    curl "${CURL_BASE[@]}" -m 15 -X POST "${TG_API}/answerCallbackQuery" \
+    tg_api answerCallbackQuery 15 \
         --data-urlencode "callback_query_id=${cb_id}" \
         --data-urlencode "text=${alert_text}" \
         --data-urlencode "show_alert=${show_alert}" \
@@ -113,48 +107,35 @@ tg_answer_callback() {
         || log "tg_answer_callback failed"
 }
 
-tg_send_document() {
-    local chat_id="$1" file_path="$2" caption="$3"
-    curl "${CURL_BASE[@]}" -m 60 -X POST "${TG_API}/sendDocument" \
-        -F "chat_id=${chat_id}" \
-        -F "document=@${file_path}" \
-        -F "caption=${caption}" \
-        -F "parse_mode=Markdown" \
-        >/dev/null 2>&1 \
-        || log "tg_send_document failed"
+# ===== Commands menu + help (both from BOT_COMMANDS) =====
+
+bot_commands_json() {
+    printf '%s\n' "${BOT_COMMANDS[@]}" | jq -n -c --rawfile list /dev/stdin '
+        $list | split("\n") | map(select(length > 0) | index("|") as $i
+            | {command: .[:$i], description: .[$i + 1:]})'
 }
 
-tg_send_to_plain() {
-    local chat_id="$1" text="$2"
-    curl "${CURL_BASE[@]}" -m 20 -X POST "${TG_API}/sendMessage" \
-        --data-urlencode "chat_id=${chat_id}" \
-        --data-urlencode "text=${text}" \
-        --data-urlencode "disable_web_page_preview=true" \
-        >/dev/null 2>&1 \
-        || log "tg_send_to_plain failed"
-}
-
-# Split body into <=TG_CHUNK_LIMIT char chunks on newline boundaries; send each as plain text.
-# Returns count of messages sent via stdout.
-tg_send_chunked_plain() {
-    local chat_id="$1" body="$2"
-    local buf="" line count=0
-    while IFS= read -r line; do
-        if (( ${#buf} + ${#line} + 1 > TG_CHUNK_LIMIT )); then
-            tg_send_to_plain "$chat_id" "$buf"
-            count=$((count + 1))
-            buf=""
-        fi
-        if [[ -n "$buf" ]]; then
-            buf+=$'\n'
-        fi
-        buf+="$line"
-    done <<< "$body"
-    if [[ -n "$buf" ]]; then
-        tg_send_to_plain "$chat_id" "$buf"
-        count=$((count + 1))
+register_commands() {
+    if tg_api setMyCommands 15 --data-urlencode "commands=$(bot_commands_json)" >/dev/null 2>&1; then
+        log "registered ${#BOT_COMMANDS[@]} bot commands"
+    else
+        log "setMyCommands failed; command menu not updated"
     fi
-    echo "$count"
+}
+
+help_text() {
+    local entry
+    printf '🤖 SMART Watcher · %s\n\nCommands:\n' "$HOST_NAME"
+    for entry in "${BOT_COMMANDS[@]}"; do
+        printf '/%s — %s\n' "${entry%%|*}" "${entry#*|}"
+    done
+    printf '\nAutomatic scan every %sh. Policy: %s. Critical findings always burst; the paranoid policy bursts on every finding.' \
+        "$((SCAN_INTERVAL / 3600))" "$SMART_POLICY"
+}
+
+handle_help() {
+    local chat_id="$1"
+    tg_send_text_to "$chat_id" "$(help_text)" || log "help reply failed"
 }
 
 # ===== Heartbeat command =====
@@ -224,162 +205,59 @@ handle_callback() {
     esac
 }
 
-# ===== Scan command =====
+# ===== /scan and /full =====
 
-# Build markdown report file at $1; return highest severity via stdout.
-build_scan_report() {
-    local out="$1"
-    local drive verdict severity reason full rank icon label
-    local highest_rank=0 overall="ok"
-    local now
-    now="$(date -Iseconds)"
-
-    {
-        echo "# SMART Scan Report"
-        echo ""
-        echo "- **Host:** \`${HOST_NAME}\`"
-        echo "- **Generated:** \`${now}\`"
-        echo ""
-    } > "$out"
-
-    local per_drive_summary=""
-    while IFS= read -r drive; do
-        [[ -z "$drive" ]] && continue
-        verdict="$("$SMART_CHECK_BIN" "$drive")"
-        smart_parse_result "$verdict"
-        severity="$SMART_RESULT_SEVERITY"
-        reason="$SMART_RESULT_REASON"
-        rank="$(smart_severity_rank "$severity")"
-        icon="$(smart_severity_icon "$severity")"
-        label="$(smart_severity_label "$severity")"
-        (( rank > highest_rank )) && highest_rank="$rank"
-
-        if [[ "$severity" == "ok" ]]; then
-            per_drive_summary+="- 🟢 \`${drive}\` — **GOOD**"$'\n'
-        else
-            per_drive_summary+="- ${icon} \`${drive}\` — **${label}**: ${reason}"$'\n'
-        fi
-
-        full="$("$SMARTCTL_BIN" -a "$drive" 2>&1 || true)"
-
-        {
-            echo ""
-            if [[ "$severity" != "ok" ]]; then
-                echo "## ${icon} ${drive} — ${label}"
-                echo ""
-                echo "**Evidence:** \`${reason}\`"
-            else
-                echo "## 🟢 ${drive} — GOOD"
-            fi
-            echo ""
-            echo '```'
-            echo "$full"
-            echo '```'
-        } >> "$out"
-    done < <(load_drives)
-
-    {
-        echo ""
-        echo "## Summary"
-        echo ""
-        echo "$per_drive_summary"
-        case "$highest_rank" in
-            3) echo "**Overall: 🔴 CRITICAL FINDINGS**" ;;
-            2) echo "**Overall: 🟠 DEGRADED HEALTH**" ;;
-            1) echo "**Overall: 🟡 ADVISORIES REQUIRE REVIEW**" ;;
-            *) echo "**Overall: ✅ ALL DRIVES HEALTHY**" ;;
-        esac
-    } >> "$out"
-
-    case "$highest_rank" in
-        3) overall="critical" ;;
-        2) overall="degraded" ;;
-        1) overall="advisory" ;;
-    esac
-    echo "$overall"
+drive_count_label() {
+    if [[ "$1" == "1" ]]; then echo "1 drive"; else echo "$1 drives"; fi
 }
 
-handle_scan() {
-    local chat_id="$1"
-    log "/scan from authorized chat"
-    tg_send_to "$chat_id" "🔍 *Scanning drives on* \`${HOST_NAME}\` *...*"
+# handle_report <chat_id> <scan|full>
+# One acknowledgement, then the visual report. /full also attaches a Markdown
+# file with the evidence and raw smartctl text. Each drive is read once.
+handle_report() {
+    local chat_id="$1" mode="$2"
+    local -a drives
+    local n workdir generated text worst caption
+    mapfile -t drives < <(load_drives)
+    n="${#drives[@]}"
+    log "/${mode} from authorized chat (${n} drives)"
 
-    local ts file overall caption
-    ts="$(date +%Y%m%d-%H%M%S)"
-    file="/tmp/smart-scan-${HOST_NAME}-${ts}.md"
-
-    # Build full markdown report up front (used as fallback attachment).
-    overall="$(build_scan_report "$file")"
-
-    # Send per-drive: header verdict, then chunked plain-text smartctl -a output.
-    local drive verdict severity reason icon label full any_split=0 chunks
-    while IFS= read -r drive; do
-        [[ -z "$drive" ]] && continue
-        verdict="$("$SMART_CHECK_BIN" "$drive")"
-        smart_parse_result "$verdict"
-        severity="$SMART_RESULT_SEVERITY"
-        reason="$SMART_RESULT_REASON"
-        icon="$(smart_severity_icon "$severity")"
-        label="$(smart_severity_label "$severity")"
-
-        if [[ "$severity" == "ok" ]]; then
-            tg_send_to "$chat_id" "🟢 *${drive} — GOOD*"
-        else
-            tg_send_to "$chat_id" "${icon} *${drive} — ${label}*"$'\n'"evidence: \`${reason}\`"
-        fi
-
-        full="$("$SMARTCTL_BIN" -a "$drive" 2>&1 || true)"
-        chunks="$(tg_send_chunked_plain "$chat_id" "===== ${drive} =====
-${full}")"
-        log "drive=${drive} chunks=${chunks}"
-        if [[ "$chunks" =~ ^[0-9]+$ ]] && (( chunks > 1 )); then
-            any_split=1
-        fi
-    done < <(load_drives)
-
-    # Final verdict.
-    case "$overall" in
-        critical)
-            tg_send_to "$chat_id" "🔴 *SCAN COMPLETE — CRITICAL FINDINGS*"
-            caption="🔴 Full SMART scan report — CRITICAL on ${HOST_NAME}"
-            ;;
-        degraded)
-            tg_send_to "$chat_id" "🟠 *SCAN COMPLETE — DEGRADED HEALTH*"
-            caption="🟠 Full SMART scan report — DEGRADED on ${HOST_NAME}"
-            ;;
-        advisory)
-            tg_send_to "$chat_id" "🟡 *SCAN COMPLETE — ADVISORIES REQUIRE REVIEW*"
-            caption="🟡 Full SMART scan report — ADVISORY on ${HOST_NAME}"
-            ;;
-        *)
-            tg_send_to "$chat_id" "✅ *SCAN COMPLETE — ALL DRIVES HEALTHY*"
-            caption="📄 Full SMART scan report — ${HOST_NAME}"
-            ;;
-    esac
-
-    # If any drive output had to be split, also attach the consolidated .md at the end.
-    if (( any_split == 1 )); then
-        log "output was chunked; attaching .md report"
-        tg_send_document "$chat_id" "$file" "$caption"
+    if (( n == 0 )); then
+        tg_send_text_to "$chat_id" "🔍 Checking drives on ${HOST_NAME}…" || log "ack failed"
+    elif [[ "$mode" == "full" ]]; then
+        tg_send_text_to "$chat_id" "🔍 Full scan of $(drive_count_label "$n") on ${HOST_NAME}… the raw output follows as a file." || log "ack failed"
     else
-        log "all output fit single messages; skipping .md attachment"
+        tg_send_text_to "$chat_id" "🔍 Scanning $(drive_count_label "$n") on ${HOST_NAME}…" || log "ack failed"
     fi
 
-    rm -f "$file"
-}
+    if ! workdir="$(mktemp -d "${TMPDIR:-/tmp}/smart-${mode}.XXXXXX")"; then
+        log "could not create a report temp dir"
+        tg_send_text_to "$chat_id" "⚠️ Report failed: could not create a temporary directory." || true
+        return
+    fi
 
-# ===== Help =====
+    generated="$(date -u '+%Y-%m-%d %H:%M UTC')"
+    report_collect "$workdir" "${drives[@]}"
+    text="$(report_render "$mode" "${workdir}/records.jsonl" "$generated")"
+    if [[ -z "$text" ]]; then
+        log "/${mode} report render failed"
+        text="⚠️ SMART ${mode} on ${HOST_NAME}: the report could not be rendered. Check the container logs."
+    fi
+    tg_send_text_to "$chat_id" "$text" || log "/${mode} report send failed"
 
-handle_help() {
-    local chat_id="$1"
-    tg_send_to "$chat_id" "*SMART Watcher* — host \`${HOST_NAME}\`
+    if [[ "$mode" == "full" ]] && (( n > 0 )); then
+        worst="$(report_worst "${workdir}/records.jsonl")"
+        report_write_markdown "${workdir}/records.jsonl" "${workdir}/report.md" "$text"
+        caption="📄 Full SMART report · ${HOST_NAME} · worst: $(smart_severity_label "$worst")"
+        if tg_send_document_to "$chat_id" "${workdir}/report.md" \
+            "smart-full-${HOST_NAME}-$(date -u +%Y%m%d-%H%M%S).md" "$caption"; then
+            log "/full attachment sent"
+        else
+            log "/full attachment failed"
+        fi
+    fi
 
-Commands:
-\`/scan\` — run scan now, full SMART output as \`.md\` file
-\`/heartbeat\` — toggle daily 'everything awesome' messages on/off (popup keyboard)
-\`/help\` — show this message
-
-Automatic scan runs every $((SCAN_INTERVAL/3600))h. Policy: \`${SMART_POLICY}\`. Critical findings always burst; paranoid policy bursts on every finding."
+    rm -rf -- "$workdir"
 }
 
 # ===== Dispatch =====
@@ -391,17 +269,18 @@ handle_command() {
 
     if ! is_authorized "$chat_id"; then
         log "unauthorized command rejected"
-        tg_send_to "$chat_id" "⛔ unauthorized chat id: \`${chat_id}\`"
+        tg_send_text_to "$chat_id" "⛔ unauthorized chat id: ${chat_id}" || true
         return
     fi
 
     case "$cmd" in
-        /scan)       handle_scan "$chat_id" ;;
+        /scan)       handle_report "$chat_id" scan ;;
+        /full)       handle_report "$chat_id" full ;;
         /heartbeat)  handle_heartbeat "$chat_id" ;;
         /start|/help) handle_help "$chat_id" ;;
         *)
             log "unhandled cmd=${cmd} from authorized chat"
-            tg_send_to "$chat_id" "Unknown command: \`${cmd}\`. Try \`/help\`."
+            tg_send_text_to "$chat_id" "Unknown command: ${cmd}. Try /help." || true
             ;;
     esac
 }
@@ -413,6 +292,7 @@ main() {
     fi
 
     state_init
+    register_commands
 
     local offset
     offset="$(get_last_update_id)"
@@ -429,7 +309,7 @@ main() {
 
     while true; do
         local resp ok max_upd_id=0
-        resp="$(curl "${CURL_BASE[@]}" -m $((POLL_TIMEOUT + 10)) \
+        resp="$(curl "${TG_CURL_OPTS[@]}" -m $((POLL_TIMEOUT + 10)) \
             "${TG_API}/getUpdates?offset=${offset}&timeout=${POLL_TIMEOUT}&allowed_updates=${allowed}" \
             2>/dev/null)" || resp=""
 

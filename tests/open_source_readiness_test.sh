@@ -36,6 +36,8 @@ require_file "SECURITY.md"
 require_file "LICENSE"
 require_file ".github/workflows/ci.yml"
 require_file "scripts/smart_result_lib.sh"
+require_file "scripts/report_lib.sh"
+require_file "tests/container_smoke_test.sh"
 
 require_line ".gitignore" '^\.env$'
 require_line ".gitignore" '^state/$'
@@ -59,8 +61,12 @@ require_line "docker-compose.yml" '^[[:space:]]+- SYS_RAWIO$'
 require_line "docker-compose.yml" '^[[:space:]]+- SYS_ADMIN$'
 require_line "docker-compose.yml" '/dev/sda:/dev/sda'
 require_line ".env.example" '^SMART_POLICY=paranoid$'
+require_line ".env.example" '^# TELEGRAM_API_BASE=https://api\.telegram\.org$'
+require_line "README.md" 'TELEGRAM_API_BASE'
+require_line "README.md" '/full'
 
-for pattern in 'shellcheck' 'bash -n' 'jq -e' 'smart_check_test.sh' 'alert_state_test.sh' 'message_accuracy_test.sh' 'scan_report_test.sh' 'open_source_readiness_test.sh' 'docker compose config --quiet'; do
+# shellcheck disable=SC2016 # Literal $f is part of the pattern.
+for pattern in 'shellcheck' 'bash -n "\$f"' 'jq -e' 'for t in tests/\*_test\.sh' 'container_smoke_test\.sh' 'docker compose config --quiet'; do
     require_line ".github/workflows/ci.yml" "$pattern"
 done
 
@@ -71,6 +77,11 @@ fi
 for path in ".env.example" "config/users.conf.example" "README.md" "SECURITY.md"; do
     reject_secret_patterns "$path"
 done
+
+# Fixtures and smoke-test inputs are public too: no tokens or real chat IDs.
+while IFS= read -r path; do
+    reject_secret_patterns "${path#"${ROOT_DIR}/"}"
+done < <(find "${ROOT_DIR}/tests" -type f \( -name '*.json' -o -name '*.txt' -o -name '*.sh' -o -name '*.conf' \))
 
 if grep -RInE 'log ".*(\$\{?chat_id\}?|\$\{?from_id\}?|\$\{?cb_id\}?|\$\{?text\}?)' "${ROOT_DIR}/scripts"/*.sh; then
     fail "scripts log Telegram identifiers or message text"

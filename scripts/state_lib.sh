@@ -42,3 +42,17 @@ state_read() {
         jq -r "$@" "$filter" "$STATE_FILE" 2>/dev/null
     ) 9>>"$STATE_LOCK"
 }
+
+# state_heartbeat_enabled
+# Prints "false" only when a user switched the heartbeat off, else "true".
+# Do not write `._meta.heartbeat_enabled // true`: jq's // treats an explicit
+# false as missing, so the heartbeat could never be turned off.
+state_heartbeat_enabled() {
+    local v
+    v="$(state_read 'if ._meta.heartbeat_enabled == false then "false" else "true" end')"
+    if [[ "$v" == "false" ]]; then
+        echo "false"
+    else
+        echo "true"
+    fi
+}
